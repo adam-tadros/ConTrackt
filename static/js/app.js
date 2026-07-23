@@ -81,7 +81,7 @@ function compactUSD(n) {
   return "$" + n.toLocaleString();
 }
 function buildCards() {
-  const C = state.contracts;
+  const C = state.contracts.filter((c) => !c.archived);
   const totalVal = C.reduce((s, c) => s + (Number(c.value) || 0), 0);
   const cells = [
     { n: C.length, l: "Contracts", sub: compactUSD(totalVal) + " total value", f: () => resetF() },
@@ -126,9 +126,12 @@ function sortVal(c, k) {
 function render() {
   const q = $("#search").value.toLowerCase();
   const fd = $("#fDept").value, fs = $("#fStatus").value, fi = $("#fIns").value;
+  const showArchived = fs === "Archived";
   let rows = state.contracts.filter((c) => {
+    // Archived contracts leave the dashboard; only the "Archived" filter shows them.
+    if (showArchived ? !c.archived : c.archived) return false;
     if (fd && dept(c) !== fd) return false;
-    if (fs && contractStatus(c) !== fs) return false;
+    if (fs && fs !== "Archived" && contractStatus(c) !== fs) return false;
     if (fi === "__any" && !coiProblem(c)) return false;
     if (fi && fi !== "__any" && insStatus(c) !== fi) return false;
     if (q && !((c.vendor || "") + " " + (c.scope || "") + " " + (c.po || "") + " " + (c.poly || "")).toLowerCase().includes(q)) return false;
@@ -147,7 +150,8 @@ function render() {
       <td>${esc(c.po || "—")}</td>
       <td>${usd(c.value)}</td></tr>`;
   }).join("") || `<tr><td colspan="7" class="empty">No contracts match these filters.</td></tr>`;
-  $("#count").textContent = `${rows.length} of ${state.contracts.length} contracts`;
+  const denom = state.contracts.filter((c) => (showArchived ? c.archived : !c.archived)).length;
+  $("#count").textContent = `${rows.length} of ${denom}${showArchived ? " archived" : ""} contracts`;
 }
 function buildDeptFilter() {
   const sel = $("#fDept"), cur = sel.value;
@@ -203,6 +207,9 @@ async function openDetail(id) {
         <button class="btn" onclick="editDetail()">✎ Edit</button>
         ${docBtn(agreement, "📄 Contract")}
         ${docBtn(coi, "🛡 COI")}
+        ${c.archived
+          ? `<button class="btn ghost" onclick="restoreContract('${esc(c.id)}')">♻ Restore</button>`
+          : `<button class="btn ghost" onclick="askArchiveContract('${esc(c.id)}')">🗄 Archive</button>`}
         <button class="btn ghost" onclick="closeDetail();document.getElementById('navNotifBtn').click()">Alerts</button>
       </div>
 
@@ -375,6 +382,21 @@ async function doArchive(archived) {
   } catch (e) { toast(e.message, true); }
 }
 
+/* ===== Archive / restore a whole contract (removes it from the dashboard) ===== */
+let _archiveContractId = null;
+function askArchiveContract(id) { _archiveContractId = id; $("#archiveContractModal").classList.add("show"); }
+function closeArchiveContract() { $("#archiveContractModal").classList.remove("show"); }
+async function confirmArchiveContract() { closeArchiveContract(); await setContractArchived(_archiveContractId, true); }
+async function restoreContract(id) { await setContractArchived(id, false); }
+async function setContractArchived(id, archived) {
+  if (!id) return;
+  try {
+    await api(`/api/contracts/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ archived }) });
+    toast(archived ? "Contract archived — removed from the dashboard" : "Contract restored");
+    closeDetail(); await loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
 /* ===== Document Hub ===== */
 function buildDocHub() {
   let docs = state.documents.slice();
@@ -426,6 +448,7 @@ function resetUpload() {
   $("#uploadStatus").innerHTML = "";
   $("#pdfframe").src = "";
   $("#fileInput").value = "";
+  $("#matchBox").innerHTML = "";
   state.pendingUpload = null;
 }
 
@@ -449,9 +472,11 @@ async function uploadFile(file) {
     state.pendingUpload.fields = fields;
     $("#scan").classList.add("hidden");
     renderExtractFields(fields);
+    renderMatch(fields);
   } else {
     $("#scan").classList.add("hidden");
     renderExtractFields(res.fields || {});
+    renderMatch(res.fields || {});
   }
 }
 async function pollParse(docId, tries = 40) {
@@ -480,14 +505,108 @@ function collectFields() {
   $$("#exrows [data-key]").forEach((el) => { let v = el.value; if (el.type === "number") v = v === "" ? null : Number(v); else if (v === "") v = null; out[el.dataset.key] = v; });
   return out;
 }
+/* ===== Vendor matching (link an uploaded doc to the right contract) ===== */
+// Normalize a vendor name for comparison: lowercase, strip punctuation and
+// common company suffixes so "Acme Corp." and "acme corporation" match.
+function normVendor(s) {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "")
+    .replace(/(incorporated|corporation|company|inc|llc|llp|corp|co|ltd)$/g, "");
+}
+function findVendorMatches(vendor) {
+  const nv = normVendor(vendor);
+  if (!nv) return [];
+  return state.contracts
+    .filter((c) => !c.archived)
+    .map((c) => {
+      const cv = normVendor(c.vendor);
+      let score = 0;
+      if (cv && nv) { if (cv === nv) score = 3; else if (cv.includes(nv) || nv.includes(cv)) score = 2; }
+      return { c, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || (a.c.vendor || "").localeCompare(b.c.vendor || ""));
+}
+function contractLabel(c) {
+  const term = c.end ? " · ends " + fmt(c.end) : "";
+  const cat = c.cat ? " · " + c.cat : "";
+  return (c.vendor || "Untitled contract") + cat + term;
+}
+// After parsing, offer to link the document to an existing contract matched by
+// vendor. The best match is pre-selected; the user can confirm, pick another,
+// or choose to create a new contract.
+function renderMatch(fields) {
+  fields = fields || {};
+  const vendor = fields.vendor || "";
+  const matches = findVendorMatches(vendor);
+  const best = matches[0];
+  // Guess the document type: looks like a COI if it carries insurance info but
+  // no agreement value/term.
+  const looksCOI = !!((fields.ins || String(fields.addl || "").toLowerCase() === "yes") && !fields.value && !fields.end);
+  const all = state.contracts.filter((c) => !c.archived)
+    .slice().sort((a, b) => (a.vendor || "").localeCompare(b.vendor || ""));
+  const opts = [`<option value="">➕ Create a new contract</option>`]
+    .concat(all.map((c) => `<option value="${esc(c.id)}" ${best && best.c.id === c.id ? "selected" : ""}>${esc(contractLabel(c))}</option>`))
+    .join("");
+  const note = best
+    ? `<span class="badge badge-ok">Vendor match</span> This looks like <b>${esc(best.c.vendor)}</b>. Confirm below, pick another, or create a new contract.`
+    : (vendor
+        ? `No existing contract matches <b>${esc(vendor)}</b> — a new contract will be created. You can still attach it to one below.`
+        : `Choose the contract this document belongs to, or create a new one.`);
+  $("#matchBox").innerHTML = `
+    <div class="sec" style="margin-top:8px">Link this document</div>
+    <div class="mini" id="matchNote" style="margin:2px 0 10px">${note}</div>
+    <div class="exrow"><div class="k">Document type</div><div class="v">
+      <select data-key="__type" id="matchType">
+        <option value="contract" ${looksCOI ? "" : "selected"}>Agreement / Contract</option>
+        <option value="coi" ${looksCOI ? "selected" : ""}>Certificate of Insurance (COI)</option>
+      </select></div></div>
+    <div class="exrow"><div class="k">Attach to</div><div class="v">
+      <select id="matchTarget">${opts}</select></div></div>`;
+}
+
 async function saveContract() {
   const payload = collectFields();
   if (!payload.vendor) return toast("Vendor is required", true);
-  if (state.pendingUpload && state.pendingUpload.document) payload.document_id = state.pendingUpload.document.id;
+  const docId = (state.pendingUpload && state.pendingUpload.document) ? state.pendingUpload.document.id : null;
+  const target = $("#matchTarget") ? $("#matchTarget").value : "";
+  const docType = $("#matchType") ? $("#matchType").value : "contract";
   try {
+    if (target) {
+      // Link the uploaded document to an existing contract.
+      if (docId) {
+        await api(`/api/documents/${docId}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contract_id: target, type: docType }),
+        });
+      }
+      // Merge reviewed fields into the target without clobbering it: a COI only
+      // updates insurance fields; an agreement merges its non-empty fields.
+      const upd = {};
+      const keys = docType === "coi" ? ["ins", "addl"] : Object.keys(payload);
+      keys.forEach((k) => { const v = payload[k]; if (v !== null && v !== "" && v !== undefined) upd[k] = v; });
+      if (Object.keys(upd).length) {
+        await api(`/api/contracts/${target}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(upd),
+        });
+      }
+      toast("Linked to existing contract");
+      resetUpload(); await loadAll();
+      showView("dashboard", $(`.sidebar nav button[onclick*="'dashboard'"]`));
+      openDetail(target);
+      return;
+    }
+    // Create a new contract from the uploaded document.
+    if (docId) payload.document_id = docId;
     await api("/api/contracts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    if (docId && docType) {
+      await api(`/api/documents/${docId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: docType }),
+      });
+    }
     toast("Contract saved"); resetUpload(); await loadAll();
-    const btn = $(`.sidebar nav button[onclick*="'dashboard'"]`); showView("dashboard", btn);
+    showView("dashboard", $(`.sidebar nav button[onclick*="'dashboard'"]`));
   } catch (e) { toast(e.message, true); }
 }
 
@@ -506,6 +625,6 @@ drop.addEventListener("click", () => fileInput.click());
 ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.style.borderColor = ""; }));
 drop.addEventListener("drop", (e) => { if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]); });
 fileInput.addEventListener("change", () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeDetail(); closeMessage(); closeDoc(); } });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeDetail(); closeMessage(); closeDoc(); closeArchive(); closeArchiveContract(); } });
 
 loadAll();

@@ -267,7 +267,8 @@ def upload():
 # --------------------------------------------------------------------------
 @app.route("/api/stats", methods=["GET"])
 def stats():
-    contracts = [db.enrich(c) for c in db.list_contracts()]
+    # Archived contracts are excluded from dashboard aggregates.
+    contracts = [db.enrich(c) for c in db.list_contracts() if not c.get("archived")]
     by_status, by_category, by_college = {}, {}, {}
     total_value = 0.0
     for c in contracts:
@@ -297,6 +298,8 @@ def alerts():
     messages = {m["id"]: m for m in db.list_messages()}
     out = []
     for raw in db.list_contracts():
+        if raw.get("archived"):
+            continue  # archived contracts don't raise alerts
         c = db.enrich(raw)
         di = c.get("days_to_insurance")
         de = c.get("days_to_end")

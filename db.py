@@ -30,6 +30,7 @@ CONTRACT_FIELDS = [
     "addl",     # additional insured endorsement (Yes/No/text)
     "contract_head",        # name of the responsible person
     "contract_head_email",  # their email (blank => no alert email sent)
+    "archived",             # True => hidden from the dashboard/stats/alerts
 ]
 
 MESSAGE_FIELDS = [

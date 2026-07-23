@@ -86,6 +86,7 @@
                     <option value="Active">Active</option>
                     <option value="Expiring">Expiring soon</option>
                     <option value="Expired">Expired</option>
+                    <option value="Archived">Archived</option>
                   </select>
                   <select id="fIns">
                     <option value="">All insurance status</option>
@@ -133,6 +134,7 @@
                     <div class="fsub" id="extractMethod"></div>
                     <div class="scanline hidden" id="scan"></div>
                     <div class="exscroll" id="exrows"></div>
+                    <div class="matchbox" id="matchBox"></div>
                     <div style="display:flex;gap:10px;margin-top:14px">
                       <button class="btn ghost" onclick="resetUpload()">Upload another</button>
                       <button class="btn" style="flex:1;justify-content:center" id="saveContractBtn" onclick="saveContract()">✓ Save contract</button>
@@ -207,6 +209,21 @@
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
         <button class="btn ghost" onclick="closeArchive()">No</button>
         <button class="btn" onclick="confirmArchive()">Yes, archive</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ARCHIVE CONTRACT CONFIRM MODAL -->
+<div class="modal" id="archiveContractModal">
+  <div class="mbox">
+    <div class="mh"><h3>Archive contract</h3><button class="close" style="position:static" onclick="closeArchiveContract()">×</button></div>
+    <div class="mbody">
+      <p style="margin:0 0 4px">Are you sure you want to archive this contract?</p>
+      <p class="mini" style="margin:0">It will be removed from the dashboard and its alerts. You can find it again with the <strong>Archived</strong> filter and restore it anytime.</p>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+        <button class="btn ghost" onclick="closeArchiveContract()">No</button>
+        <button class="btn" onclick="confirmArchiveContract()">Yes, archive</button>
       </div>
     </div>
   </div>

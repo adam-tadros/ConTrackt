@@ -127,6 +127,8 @@ def notify_expiring(website_url, window=None):
     results = []
 
     for raw in db.list_contracts():
+        if raw.get("archived"):
+            continue  # archived contracts don't send alert emails
         c = db.enrich(raw, window=window)
         # Which reminder band is the contract in right now (2 weeks / 30 days)?
         stage = current_stage(soonest_days(c))
