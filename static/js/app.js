@@ -38,7 +38,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dept = (c) => c.cat || "Uncategorized";
 const contractStatus = (c) => ({ active: "Active", expiring: "Expiring", expired: "Expired" }[c.status] || "Unknown");
 function insStatus(c) { const d = c.days_to_insurance; if (d == null) return "Unknown"; return d < 0 ? "Lapsed" : d <= 30 ? "Expiring" : "Current"; }
-function poStatus(c) { const d = c.days_to_po_end; if (d == null) return "Open"; return d < 0 ? "Closed" : d <= 45 ? "Closing" : "Open"; }
+// Insurance is only a problem when it lapses BEFORE the contract ends (a
+// coverage gap). If the COI outlasts (or matches) the contract, it's fine.
+function coiProblem(c) { const di = c.days_to_insurance, de = c.days_to_end; return di != null && de != null && de >= 0 && di < de && di <= 30; }
 const TAG = { Active: "t-green", Expiring: "t-amber", Expired: "t-red", Unknown: "t-slate", Current: "t-green", Lapsed: "t-red", Open: "t-green", Closing: "t-amber", Closed: "t-slate" };
 const docVendor = (cid) => { const c = state.contracts.find((x) => x.id === cid); return c ? c.vendor : ""; };
 
@@ -86,7 +88,7 @@ function buildCards() {
     { n: C.filter((c) => contractStatus(c) === "Active").length, l: "Active", dot: "var(--green)", f: () => setStatus("Active") },
     { n: C.filter((c) => contractStatus(c) === "Expiring").length, l: "Expiring ≤30d", dot: "var(--amber)", f: () => setStatus("Expiring") },
     { n: C.filter((c) => contractStatus(c) === "Expired").length, l: "Expired", dot: "var(--red)", red: true, f: () => setStatus("Expired") },
-    { n: C.filter((c) => ["Expiring", "Lapsed"].includes(insStatus(c))).length, l: "COI issues", dot: "var(--crim)", red: true, f: () => setIns() },
+    { n: C.filter(coiProblem).length, l: "COI issues", dot: "var(--crim)", red: true, f: () => setIns() },
   ];
   $("#cards").innerHTML = cells.map((c, i) =>
     `<div class="stat" onclick="_cardf(${i})">
@@ -127,7 +129,7 @@ function render() {
   let rows = state.contracts.filter((c) => {
     if (fd && dept(c) !== fd) return false;
     if (fs && contractStatus(c) !== fs) return false;
-    if (fi === "__any" && !["Expiring", "Lapsed"].includes(insStatus(c))) return false;
+    if (fi === "__any" && !coiProblem(c)) return false;
     if (fi && fi !== "__any" && insStatus(c) !== fi) return false;
     if (q && !((c.vendor || "") + " " + (c.scope || "") + " " + (c.po || "") + " " + (c.poly || "")).toLowerCase().includes(q)) return false;
     return true;
@@ -158,24 +160,22 @@ function buildDeptFilter() {
 async function openDetail(id) {
   let c;
   try { c = await api("/api/contracts/" + id); } catch (e) { return toast(e.message, true); }
-  const st = contractStatus(c), is = insStatus(c), ps = poStatus(c);
+  const st = contractStatus(c), is = insStatus(c);
+  const prob = coiProblem(c);   // insurance lapses before the contract ends
   const docs = c.document_records || [];
   const agreement = docs.find((d) => d.type !== "coi");
   const coi = docs.find((d) => d.type === "coi");
   const pill = (cls, txt) => `<span class="pill ${cls}">${esc(txt)}</span>`;
   const cCls = st === "Active" ? "ok" : st === "Expiring" ? "warn" : "bad";
-  const iCls = is === "Current" ? "ok" : is === "Expiring" ? "warn" : is === "Unknown" ? "warn" : "bad";
-  const pCls = ps === "Open" ? "ok" : ps === "Closing" ? "warn" : "bad";
+  const iCls = prob ? (is === "Lapsed" ? "bad" : "warn") : "ok";
 
   const rec = [];
   if (st === "Expired") rec.push("Cancel or issue a new agreement — contract is expired.");
   else if (st === "Expiring") rec.push(`Renew or extend the agreement before ${fmt(c.end)}.`);
-  if (is === "Lapsed") rec.push("Request a current Certificate of Insurance from the vendor.");
-  else if (is === "Expiring") rec.push(`Request an updated COI before ${fmt(c.ins)} to avoid a lapse.`);
+  if (prob && is === "Lapsed") rec.push("Request a current Certificate of Insurance — coverage lapsed before the contract ends.");
+  else if (prob) rec.push(`Request an updated COI before ${fmt(c.ins)} — it lapses before the contract ends.`);
   if (String(c.addl).toLowerCase() !== "yes") rec.push("Obtain an additional-insured endorsement naming the District.");
-  if (ps === "Closed") rec.push("Confirm a new purchase order for the current fiscal year.");
-  else if (ps === "Closing") rec.push(`Renew the purchase order before ${fmt(c.poEnd)}.`);
-  if (!rec.length) rec.push("No action needed — contract, insurance, and PO are all current.");
+  if (!rec.length) rec.push("No action needed — contract and insurance are in good standing.");
 
   const docBtn = (d, label) => d
     ? `<button class="btn ghost" onclick="openDoc('${esc(d.id)}')">${label}</button>`
@@ -195,8 +195,7 @@ async function openDetail(id) {
     <div class="body">
       <div class="pills" style="margin-bottom:14px">
         ${pill(cCls, st === "Expiring" ? "Expiring soon" : st)}
-        ${pill(iCls, is === "Current" ? "COI current" : is === "Lapsed" ? "COI lapsed" : is === "Expiring" ? "COI expiring" : "COI unknown")}
-        ${c.po ? pill(pCls, c.po) : ""}
+        ${pill(iCls, prob ? (is === "Lapsed" ? "COI lapsed" : "COI expiring") : "COI OK")}
         ${String(c.addl).toLowerCase() === "yes" ? "" : pill("warn", "No add’l insured")}
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
@@ -212,7 +211,6 @@ async function openDetail(id) {
         ${kv("Value", usd(c.value))}
         ${kv("Term", fmt(c.start) + " → " + fmt(c.end))}
         ${kv("PO number", esc(c.po || "—"))}
-        ${kv("PO ends", fmt(c.poEnd))}
         ${kv("Campus", esc(c.college || "—"))}
         ${kv("Insurance expiry", fmt(c.ins))}
         ${kv("Additional insured", esc(c.addl || "—"))}
@@ -221,8 +219,7 @@ async function openDetail(id) {
       <div class="sec">Lifecycle tracking</div>
       <div class="track">
         <div class="track-row"><div><div class="tt">Contract term</div><div class="ts">Ends ${fmt(c.end)}</div></div>${pill(cCls, st === "Expiring" ? "Expiring soon" : st)}</div>
-        <div class="track-row"><div><div class="tt">Insurance / COI</div><div class="ts">${is === "Lapsed" ? "Certificate expired " + fmt(c.ins) : "Valid through " + fmt(c.ins)}</div></div>${pill(iCls, is)}</div>
-        <div class="track-row"><div><div class="tt">Purchase order</div><div class="ts">Ends ${fmt(c.poEnd)}</div></div>${c.po ? pill(pCls, c.po) : pill("warn", "No PO")}</div>
+        <div class="track-row"><div><div class="tt">Insurance / COI</div><div class="ts">${prob ? "Lapses " + fmt(c.ins) + " — before the contract ends" : "Valid through " + fmt(c.ins)}</div></div>${pill(iCls, prob ? (is === "Lapsed" ? "Lapsed" : "Expiring") : "OK")}</div>
       </div>
 
       <div class="sec">Documents (${docs.length})</div>

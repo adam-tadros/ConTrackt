@@ -300,14 +300,15 @@ def alerts():
         c = db.enrich(raw)
         di = c.get("days_to_insurance")
         de = c.get("days_to_end")
-        dp = c.get("days_to_po_end")
         kinds = []
-        if di is not None and 0 <= di <= window:
+        # Insurance is only a problem if it lapses BEFORE the contract ends
+        # (a coverage gap). If it outlasts the contract, no alert.
+        if (di is not None and 0 <= di <= window
+                and de is not None and di < de):
             kinds.append(("insurance", di, c.get("ins")))
         if de is not None and 0 <= de <= window:
             kinds.append(("contract", de, c.get("end")))
-        if dp is not None and 0 <= dp <= window:
-            kinds.append(("po", dp, c.get("poEnd")))
+        # POs are just identifiers — they don't lapse, so no PO alert.
         if not kinds:
             continue
 

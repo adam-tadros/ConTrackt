@@ -573,3 +573,7 @@
 #docViewer img{max-width:100%;max-height:100%;object-fit:contain}
 #docViewer .empty{color:#e2e8f0}
 @media(max-width:900px){#docViewer{height:70dvh}}
+
+/* center the FHDA mark within its circular badge (show the whole logo) */
+.logo-badge{overflow:hidden}
+.logo-badge img{width:100%;height:100%;object-fit:contain;padding:3px;display:block}

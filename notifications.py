@@ -20,11 +20,19 @@ def _doc_link(website_url, doc_id):
 
 
 def soonest_days(c):
-    """Fewest days until any of the contract's tracked dates expire (>= 0)."""
-    vals = [
-        d for d in (c.get("days_to_end"), c.get("days_to_insurance"), c.get("days_to_po_end"))
-        if d is not None and d >= 0
-    ]
+    """Fewest days until an alert-worthy expiry (>= 0).
+
+    Considers the contract end date, and the insurance date ONLY when it lapses
+    before the contract ends (a coverage gap). POs are identifiers and never
+    trigger alerts.
+    """
+    de = c.get("days_to_end")
+    di = c.get("days_to_insurance")
+    vals = []
+    if de is not None and de >= 0:
+        vals.append(de)
+    if di is not None and di >= 0 and de is not None and di < de:
+        vals.append(di)
     return min(vals) if vals else None
 
 
