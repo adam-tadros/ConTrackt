@@ -38,6 +38,7 @@ in-memory backend, so the app runs with zero credentials for local previews.
 | **AWS Lambda** | Event-driven parser. When a document lands in S3 (`uploads/` prefix), the `contrackt-parser` function is triggered, reads the file, calls Bedrock/Textract, and writes the extracted fields back to the document record in DynamoDB. Decouples parsing from the web request. |
 | **Amazon Bedrock** | Runs Claude 3 Haiku to read an uploaded document and return structured JSON (vendor, dates, value, scope, summary, etc.). Invoked from the Lambda (or inline in demo mode). |
 | **Amazon Textract** | Fallback OCR path: extracts raw text from a document, which is then sent to Bedrock if the direct document parse fails. |
+| **Amazon SES** | Sends expiry-alert emails to the contract head. Each sent message is recorded (subject, body, recipient, status) so it can be reviewed from the Alerts tab. |
 | **AWS IAM** | Least-privilege policies grant the EC2 instance role and the Lambda role access only to the specific bucket, tables, Textract, and Bedrock actions each needs. No credentials live on the server. |
 | **AWS Elastic Beanstalk** | Hosts the Flask app: provisions EC2 + nginx + gunicorn. Deployed as a single-instance environment. |
 
@@ -99,6 +100,11 @@ Flask (Elastic Beanstalk)
   viewer with tabs for a contract and its matching COI.
 - **30-day expiration alerts** — for insurance (COI), contract end, and PO end
   dates, with severity based on days remaining.
+- **Email alerts to the contract head** — each contract has a contract head and
+  (optionally) an email. When it enters the 30-day window, an SES email is sent
+  ("this contract is about to expire in 30 days") linking the app and both the
+  agreement and COI documents. Contracts without an email still show an alert;
+  no email is sent. Alert boxes are clickable to view the exact message sent.
 - **Searchable Document Hub** — search by filename, type, or vendor; toggle
   between current and archived documents; archive/restore.
 - **Status tracking** — each contract is automatically classified as active,

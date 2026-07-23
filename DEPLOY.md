@@ -184,3 +184,53 @@ aws logs tail /aws/lambda/contrackt-parser --follow --profile kiro-dev --region 
   missing; re-run `deploy_lambda.ps1`.
 - `parse_status=error` with an AccessDenied → the Lambda role is missing Bedrock
   or S3 permissions.
+
+## Email alerts with Amazon SES
+
+Contracts entering the 30-day expiry window trigger an email to the contract
+head (if an email is on file). The message says the contract expires in 30 days
+and links the app plus the agreement and COI documents. Each send is recorded so
+the Alerts tab can link to the exact message.
+
+### One-time setup
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\setup_ses.ps1
+```
+
+This provisions the `contrackt_messages` table, adds SES + messages permissions
+to the instance role, requests SES identity verification, and backfills contract
+heads on the sample data.
+
+### Verify the sender/recipient (required — SES sandbox)
+
+SES starts in the sandbox, so both the sender and recipient must be verified.
+For testing we use one address for both. After running setup, open the inbox for
+`user79490@gmail.com` and click the AWS verification link. Check status with:
+
+```powershell
+aws ses get-identity-verification-attributes --identities user79490@gmail.com --region us-west-2
+```
+
+Until it shows `Success`, sends are recorded with `send_status=failed`
+("Email address is not verified") and retried on the next run.
+
+### Relevant environment variables (set on the EB environment)
+
+| Variable | Value |
+|---|---|
+| `SES_FROM_EMAIL` | verified sender (e.g. `user79490@gmail.com`) |
+| `ALERT_TEST_RECIPIENT` | if set, all alert emails go here instead of the head's real address |
+| `SES_REGION` | `us-west-2` |
+| `WEBSITE_URL` | public app URL used in the email links |
+| `DDB_MESSAGES_TABLE` | `contrackt_messages` |
+
+To go beyond the sandbox (send to arbitrary contract-head addresses), request
+SES production access in the console and remove `ALERT_TEST_RECIPIENT`.
+
+### How emails are triggered
+
+Opening the Alerts tab (or clicking **Send alert emails**) POSTs
+`/api/alerts/notify`, which sends one email per expiring contract (idempotent per
+contract's dates). For fully automated sending, schedule that call — e.g. an
+EventBridge rule invoking a small Lambda that hits the endpoint daily.
