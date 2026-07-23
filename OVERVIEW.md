@@ -18,7 +18,7 @@ files so staff don't have to key it in by hand.
 | Async parsing | **AWS Lambda** triggered by S3 upload events |
 | Data store | **Amazon DynamoDB** (NoSQL) |
 | Document store | **Amazon S3** |
-| Frontend | Vanilla HTML / CSS / JavaScript (single-page UI, no framework) |
+| Frontend | Vanilla HTML / CSS / JavaScript (single-page UI, no framework), **mobile-first & fully responsive** |
 | Config | Environment variables via **python-dotenv** |
 | Web runtime | **AWS Lambda** running the WSGI app via **apig-wsgi** |
 | Hosting | **Amazon API Gateway** (HTTP API) + **AWS Lambda** — serverless, deployed and live |
@@ -34,14 +34,13 @@ in-memory backend, so the app runs with zero credentials for local previews.
 | Service | Role in ConTrackt |
 |---|---|
 | **Amazon S3** | Stores uploaded documents (contracts, POs, COIs). Files are private; the app serves them through short-lived **presigned URLs**. Bucket has all public access blocked. |
-| **Amazon DynamoDB** | Two tables: `contracts` (agreement records + derived status) and `documents` (file metadata, S3 keys, links to contracts, with a `contract_id` index). Billed on-demand (pay-per-request). |
+| **Amazon DynamoDB** | Three tables: `contracts` (agreement records + derived status, incl. contract head/email), `documents` (file metadata, S3 keys, parse status/fields, `contract_id` index), and `messages` (sent alert-email records). Billed on-demand (pay-per-request). |
 | **AWS Lambda** | Two functions: `contrackt-web` runs the whole web app/API (behind API Gateway), and `contrackt-parser` is triggered by S3 uploads to parse documents and write results back to DynamoDB. |
 | **Amazon API Gateway** | HTTP API that fronts the `contrackt-web` Lambda — this is the public entry point for the site and JSON API (replaces the old Elastic Beanstalk server). |
 | **Amazon Bedrock** | Runs **Claude Sonnet 4.5** to read an uploaded document and return structured JSON (vendor, dates, value, scope, summary, etc.). Invoked from the parser Lambda (or inline in demo mode). |
 | **Amazon Textract** | Fallback OCR path: extracts raw text from a document, which is then sent to Bedrock if the direct document parse fails. |
-| **Amazon SES** | Sends expiry-alert emails to the contract head. Each sent message is recorded (subject, body, recipient, status) so it can be reviewed from the Alerts tab. |
-| **AWS IAM** | Least-privilege policies grant the EC2 instance role and the Lambda role access only to the specific bucket, tables, Textract, and Bedrock actions each needs. No credentials live on the server. |
-| **Amazon SES** — reminders | Alert emails are sent at **30 days** and again at **2 weeks** before expiry (two reminders per contract). |
+| **Amazon SES** | Sends expiry-alert emails to the contract head — one at **30 days** and a second reminder at **2 weeks** before expiry. Each sent message is recorded (subject, body, recipient, status) so it can be reviewed from the Alerts tab. |
+| **AWS IAM** | Least-privilege roles for the two Lambdas grant access only to the specific bucket, tables, Textract, Bedrock, and SES actions each needs. No long-lived credentials live in the app. |
 
 ---
 
@@ -49,15 +48,15 @@ in-memory backend, so the app runs with zero credentials for local previews.
 
 ### Uploading and parsing a document (event-driven)
 1. A user drops a PDF or image on the **Upload** tab.
-2. Flask creates a **DynamoDB** document record with `parse_status = pending`,
-   then writes the file to **S3**.
-3. The S3 upload event triggers the **Lambda** function, which reads the file,
-   calls **Bedrock** (Textract fallback), and writes the extracted fields back
-   onto the document record (`parse_status = done`).
+2. The `contrackt-web` Lambda creates a **DynamoDB** document record with
+   `parse_status = pending`, then writes the file to **S3**.
+3. The S3 upload event triggers the `contrackt-parser` **Lambda**, which reads
+   the file, calls **Bedrock** (Textract fallback), and writes the extracted
+   fields back onto the document record (`parse_status = done`).
 4. Meanwhile the browser **polls** the document; when parsing completes, the
    fields appear in an editable form **beside a live preview** of the document.
    The user corrects anything the AI missed.
-5. On save, Flask writes a **contract** record to DynamoDB and links it to the
+5. On save, the app writes a **contract** record to DynamoDB and links it to the
    uploaded document.
 
 > In demo mode (no AWS), parsing runs inline with a stub so the flow still works.
@@ -113,6 +112,10 @@ Lambda: contrackt-web  (WSGI app via apig-wsgi)
   between current and archived documents; archive/restore.
 - **Status tracking** — each contract is automatically classified as active,
   expiring, expired, or unknown based on its end date.
+- **Responsive, mobile-first UI** — a single layout adapts from large desktops
+  down to phones: an off-canvas hamburger menu on small screens, fluid Grid/Flex
+  layouts, touch-friendly targets, horizontally-scrollable tables, dynamic
+  viewport height (`100dvh`), and safe-area handling for notched devices.
 
 ---
 
