@@ -11,3 +11,8 @@ deploy/_version_label.txt
 deploy/options.json
 deploy/lambda_build/
 deploy/lambda.zip
+deploy/web_build/
+deploy/web.zip
+deploy/_*.json
+deploy/_*.txt
+deploy/_*.ps1

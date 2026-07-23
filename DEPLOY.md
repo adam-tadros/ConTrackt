@@ -234,3 +234,41 @@ Opening the Alerts tab (or clicking **Send alert emails**) POSTs
 `/api/alerts/notify`, which sends one email per expiring contract (idempotent per
 contract's dates). For fully automated sending, schedule that call — e.g. an
 EventBridge rule invoking a small Lambda that hits the endpoint daily.
+
+## Serverless hosting: API Gateway + Lambda (replaces Elastic Beanstalk)
+
+The web app now runs in AWS Lambda (`contrackt-web`) behind an API Gateway HTTP
+API, instead of Flask on Elastic Beanstalk. Flask remains only as the internal
+WSGI app; `web_lambda.py` bridges it to Lambda via **apig-wsgi**.
+
+### Deploy / update
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\deploy_web.ps1
+```
+
+This (idempotently):
+- packages the app + templates + static + deps into `deploy/web.zip`
+- creates/updates the `contrackt-web-role` (same runtime permissions as
+  `deploy/iam-policy.json`: S3, DynamoDB x3, Bedrock, Textract, SES)
+- creates/updates the `contrackt-web` Lambda (Python 3.13, handler
+  `web_lambda.handler`)
+- quick-creates the `contrackt-api` HTTP API (catch-all `$default` route → Lambda)
+- **grants API Gateway permission to invoke the Lambda** (quick-create does not
+  always add this — the script adds it explicitly)
+- sets `WEBSITE_URL` to the API URL and all app env vars
+
+The public URL is printed at the end:
+`https://<api-id>.execute-api.us-west-2.amazonaws.com`
+
+### Notes / tradeoffs
+
+- **Upload size**: API Gateway caps request payloads at 10 MB, so
+  `MAX_UPLOAD_MB` is set to 8 on the Lambda. For larger files, switch uploads to
+  presigned direct-to-S3 (client uploads straight to S3, then notifies the API).
+- **Model**: `BEDROCK_MODEL_ID` is `us.anthropic.claude-sonnet-4-5-20250929-v1:0`
+  (a US cross-region inference profile). Model access must be enabled in Bedrock.
+- **Two reminders**: alert emails fire at 30 days and again at 2 weeks before
+  expiry (distinct, idempotent messages per stage).
+- Decommission the old server with `eb terminate contrackt-env` or
+  `aws elasticbeanstalk terminate-environment --environment-name contrackt-env`.

@@ -88,6 +88,26 @@ def test_notify_ignores_non_expiring(wired):
     assert "c_active" not in {r["contract_id"] for r in results}
 
 
+def test_two_stage_reminders(wired):
+    # contract 20 days out -> 30-day reminder
+    db.create_contract({"id": "c_20", "vendor": "D20", "end": iso(20),
+                        "contract_head_email": "x@fhda.edu"})
+    r1 = {r["contract_id"]: r for r in notifications.notify_expiring("http://site")}
+    assert r1["c_20"]["status"] == "sent"
+    m1 = db.get_message(r1["c_20"]["message_id"])
+    assert m1["kind"] == "expiry_d30"
+    assert "30 days" in m1["body_text"]
+
+    # it moves into the 2-week band -> a NEW reminder is sent
+    db.update_contract("c_20", {"end": iso(10)})
+    r2 = {r["contract_id"]: r for r in notifications.notify_expiring("http://site")}
+    assert r2["c_20"]["status"] == "sent"
+    m2 = db.get_message(r2["c_20"]["message_id"])
+    assert m2["kind"] == "expiry_d14"
+    assert "2 weeks" in m2["body_text"]
+    assert m1["id"] != m2["id"]
+
+
 def test_notify_is_idempotent(wired):
     sent = wired
     notifications.notify_expiring("http://site")

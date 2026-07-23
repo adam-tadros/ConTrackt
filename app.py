@@ -312,7 +312,8 @@ def alerts():
             continue
 
         head_email = (c.get("contract_head_email") or "").strip()
-        msg = messages.get(db.message_id_for(c))
+        stage = notifications.current_stage(notifications.soonest_days(c))
+        msg = messages.get(db.message_id_for(c, stage[0])) if stage else None
         for kind, days, dt in kinds:
             out.append(
                 {

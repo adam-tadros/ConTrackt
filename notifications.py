@@ -19,13 +19,33 @@ def _doc_link(website_url, doc_id):
     return f"{website_url.rstrip('/')}/api/documents/{doc_id}/view"
 
 
-def build_message(contract, agreement_id, coi_id, website_url):
+def soonest_days(c):
+    """Fewest days until any of the contract's tracked dates expire (>= 0)."""
+    vals = [
+        d for d in (c.get("days_to_end"), c.get("days_to_insurance"), c.get("days_to_po_end"))
+        if d is not None and d >= 0
+    ]
+    return min(vals) if vals else None
+
+
+def current_stage(days):
+    """Which reminder applies right now: 2-week band, 30-day band, or none."""
+    if days is None:
+        return None
+    if days <= 14:
+        return ("d14", "2 weeks")
+    if days <= 30:
+        return ("d30", "30 days")
+    return None
+
+
+def build_message(contract, agreement_id, coi_id, website_url, label="30 days"):
     vendor = contract.get("vendor") or "this vendor"
     poly = contract.get("poly") or ""
     site = website_url.rstrip("/")
 
     lines_txt = [
-        "This contract is about to expire in 30 days.",
+        f"This contract is about to expire in {label}.",
         "",
         f"Contract: {vendor} {('(' + poly + ')') if poly else ''}".strip(),
         f"Open ConTrackt: {site}",
@@ -47,14 +67,14 @@ def build_message(contract, agreement_id, coi_id, website_url):
 
     body_html = f"""\
 <div style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;font-size:15px;line-height:1.5">
-  <p><strong>This contract is about to expire in 30 days.</strong></p>
+  <p><strong>This contract is about to expire in {label}.</strong></p>
   <p>Contract: {esc(vendor)} {('(' + esc(poly) + ')') if poly else ''}</p>
   <p><a href="{site}" target="_blank" rel="noopener" style="color:#1d4ed8">Open ConTrackt &rarr;</a></p>
   <ul>{doc_links_html}</ul>
   <p style="color:#64748b;font-size:12px">Automated alert from ConTrackt.</p>
 </div>"""
 
-    subject = f"Contract expiring in 30 days: {vendor}"
+    subject = f"Contract expiring in {label}: {vendor}"
     return subject, body_text, body_html
 
 
@@ -100,34 +120,35 @@ def notify_expiring(website_url, window=None):
 
     for raw in db.list_contracts():
         c = db.enrich(raw, window=window)
-        # does this contract have any alert inside the window?
-        days = [c.get("days_to_end"), c.get("days_to_insurance"), c.get("days_to_po_end")]
-        has_alert = any(d is not None and 0 <= d <= window for d in days)
-        if not has_alert:
+        # Which reminder band is the contract in right now (2 weeks / 30 days)?
+        stage = current_stage(soonest_days(c))
+        if not stage:
             continue
+        stage_key, label = stage
 
-        mid = db.message_id_for(c)
+        mid = db.message_id_for(c, stage_key)
         existing = db.get_message(mid)
         if existing and existing.get("send_status") in ("sent", "demo"):
-            results.append({"contract_id": c["id"], "status": "already_sent", "message_id": mid})
+            results.append({"contract_id": c["id"], "status": "already_sent",
+                            "message_id": mid, "stage": stage_key})
             continue
 
         head_email = (c.get("contract_head_email") or "").strip()
         if not head_email:
             # No email on file: alert stays, but nothing is sent.
-            results.append({"contract_id": c["id"], "status": "skipped_no_email"})
+            results.append({"contract_id": c["id"], "status": "skipped_no_email", "stage": stage_key})
             continue
 
         docs = docmap.get(c["id"], {})
         agreement_id = docs.get("agreement")
         coi_id = docs.get("coi")
-        subject, body_text, body_html = build_message(c, agreement_id, coi_id, website_url)
+        subject, body_text, body_html = build_message(c, agreement_id, coi_id, website_url, label)
         actual = (config.ALERT_TEST_RECIPIENT or head_email).strip()
 
         record = {
             "id": mid,
             "contract_id": c["id"],
-            "kind": "expiry",
+            "kind": f"expiry_{stage_key}",
             "to_email": head_email,
             "to_actual": actual,
             "subject": subject,

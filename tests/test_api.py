@@ -175,7 +175,7 @@ def test_notify_and_view_message(client, monkeypatch):
     c2 = [a for a in alerts if a["contract_id"] == "c2"][0]
     assert c2["message_id"]
     msg = client.get(f"/api/messages/{c2['message_id']}").get_json()
-    assert "expire in 30 days" in msg["body_text"]
+    assert "about to expire in" in msg["body_text"]
     assert msg["send_status"] == "sent"
 
 

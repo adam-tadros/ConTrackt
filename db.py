@@ -322,12 +322,12 @@ def list_messages(table=None):
     return [from_dynamo(i) for i in items]
 
 
-def message_id_for(contract):
-    """Deterministic message id for a contract's current expiry window.
+def message_id_for(contract, stage):
+    """Deterministic message id for a contract's expiry window + reminder stage.
 
     Includes the end + insurance dates so a renewed contract (new dates) can
-    trigger a fresh notification, while re-processing the same dates does not
-    resend.
+    trigger fresh notifications, plus the stage ("d30" / "d14") so the 30-day
+    and 2-week reminders are distinct and both get sent.
     """
     cid = contract.get("id")
-    return f"m_{cid}_{contract.get('end') or 'na'}_{contract.get('ins') or 'na'}"
+    return f"m_{cid}_{contract.get('end') or 'na'}_{contract.get('ins') or 'na'}_{stage}"
