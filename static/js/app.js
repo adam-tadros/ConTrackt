@@ -137,7 +137,7 @@ function render() {
   rows.sort((a, b) => { const x = sortVal(a, state.sortK), y = sortVal(b, state.sortK); return (x > y ? 1 : x < y ? -1 : 0) * state.sortDir; });
   const dtxt = (d) => d == null ? "" : d < 0 ? `${-d}d ago` : `in ${d}d`;
   $("#rows").innerHTML = rows.map((c) => {
-    const st = contractStatus(c), is = insStatus(c), ps = poStatus(c);
+    const st = contractStatus(c);
     return `<tr class="row" onclick="openDetail('${esc(c.id)}')">
       <td><div class="vendor">${esc(c.vendor || "—")}</div><div class="scope">${esc(c.scope || "")}</div></td>
       <td>${esc(dept(c))}</td>
