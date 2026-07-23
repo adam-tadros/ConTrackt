@@ -340,7 +340,9 @@ function closeMessage() { $("#msgModal").classList.remove("show"); }
 async function openDoc(id) {
   const doc = state.documents.find((d) => d.id === id) || {};
   const name = doc.filename || "Document";
+  state.currentDoc = id;
   $("#docTitle").textContent = name;
+  $("#docArchiveBtn").textContent = doc.archived ? "Restore" : "Archive";
   $("#docViewer").innerHTML = `<div class="empty"><span class="spinner"></span> Loading…</div>`;
   $("#docOpenTab").removeAttribute("href");
   $("#docModal").classList.add("show");
@@ -356,6 +358,22 @@ async function openDoc(id) {
   }
 }
 function closeDoc() { $("#docModal").classList.remove("show"); $("#docViewer").innerHTML = ""; }
+
+// Archive button inside the viewer: confirm before archiving; restore is immediate.
+function docArchiveAction() {
+  const d = state.documents.find((x) => x.id === state.currentDoc); if (!d) return;
+  if (d.archived) { doArchive(false); } else { $("#archiveModal").classList.add("show"); }
+}
+function closeArchive() { $("#archiveModal").classList.remove("show"); }
+async function confirmArchive() { closeArchive(); await doArchive(true); }
+async function doArchive(archived) {
+  const id = state.currentDoc; if (!id) return;
+  try {
+    await api(`/api/documents/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ archived }) });
+    toast(archived ? "Archived — see Documents → Archived" : "Restored");
+    closeDoc(); await loadAll();
+  } catch (e) { toast(e.message, true); }
+}
 
 /* ===== Document Hub ===== */
 function buildDocHub() {

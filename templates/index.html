@@ -188,11 +188,27 @@
     <div class="mh">
       <h3 id="docTitle">Document</h3>
       <div style="display:flex;gap:10px;align-items:center">
+        <button class="btn ghost sm" id="docArchiveBtn" onclick="docArchiveAction()">Archive</button>
         <a class="btn ghost sm" id="docOpenTab" target="_blank" rel="noopener">Open in tab ↗</a>
         <button class="close" style="position:static" onclick="closeDoc()">×</button>
       </div>
     </div>
     <div class="mbody" style="padding:0"><div id="docViewer"></div></div>
+  </div>
+</div>
+
+<!-- ARCHIVE CONFIRM MODAL -->
+<div class="modal" id="archiveModal">
+  <div class="mbox">
+    <div class="mh"><h3>Archive document</h3><button class="close" style="position:static" onclick="closeArchive()">×</button></div>
+    <div class="mbody">
+      <p style="margin:0 0 4px">Are you sure you want to archive this document?</p>
+      <p class="mini" style="margin:0">You can find it later under <strong>Documents → Archived documents</strong>.</p>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+        <button class="btn ghost" onclick="closeArchive()">No</button>
+        <button class="btn" onclick="confirmArchive()">Yes, archive</button>
+      </div>
+    </div>
   </div>
 </div>
 
