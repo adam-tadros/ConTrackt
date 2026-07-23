@@ -78,6 +78,7 @@ function showView(name) {
   const [title, sub] = VIEW_META[name];
   $("#viewTitle").textContent = title;
   $("#viewSub").textContent = sub;
+  closeNav(); // collapse the mobile menu after choosing a view
 
   // Opening the Alerts tab sends any pending alert emails once per session.
   if (name === "alerts" && !state.alertsNotified) {
@@ -91,6 +92,21 @@ $("#nav").addEventListener("click", (e) => {
   if (btn) showView(btn.dataset.view);
 });
 $("#quickUpload").addEventListener("click", () => showView("upload"));
+
+// --- Mobile hamburger navigation ---
+function openNav() {
+  document.body.classList.add("nav-open");
+  $("#hamburger").setAttribute("aria-expanded", "true");
+}
+function closeNav() {
+  document.body.classList.remove("nav-open");
+  $("#hamburger").setAttribute("aria-expanded", "false");
+}
+$("#hamburger").addEventListener("click", () =>
+  document.body.classList.contains("nav-open") ? closeNav() : openNav()
+);
+$("#navBackdrop").addEventListener("click", closeNav);
+document.addEventListener("keydown", (e) => e.key === "Escape" && closeNav());
 
 // ---- Data loading ----------------------------------------------------------
 async function loadAll() {

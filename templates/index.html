@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>ConTrackt - FHDA Contract & Insurance Manager</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
 </head>
 <body>
-  <aside class="sidebar">
+  <div class="nav-backdrop" id="navBackdrop"></div>
+  <aside class="sidebar" id="sidebar">
     <div class="brand">
       <div class="logo">CT</div>
       <div><b>ConTrackt</b><small>Foothill-De Anza CCD</small></div>
@@ -23,11 +24,12 @@
 
   <div class="main">
     <div class="topbar">
-      <div>
+      <button class="hamburger" id="hamburger" aria-label="Open menu" aria-expanded="false">&#9776;</button>
+      <div class="titles">
         <h1 id="viewTitle">Dashboard</h1>
         <div class="sub" id="viewSub">Overview of contracts, insurance, and purchase orders</div>
       </div>
-      <button class="btn" id="quickUpload">+ New Document</button>
+      <button class="btn" id="quickUpload">+ New<span class="hide-xs"> Document</span></button>
     </div>
 
     <div class="content">
@@ -49,15 +51,17 @@
             <h3 class="section-title" style="margin:0">Agreement / Contract - PO Pairings</h3>
             <span class="muted" id="pairCount"></span>
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Agreement</th><th>Vendor</th><th>Campus</th>
-                <th>PO #</th><th class="mono">Value</th><th>End Date</th><th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="pairRows"></tbody>
-          </table>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Agreement</th><th>Vendor</th><th>Campus</th>
+                  <th>PO #</th><th class="mono">Value</th><th>End Date</th><th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="pairRows"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -98,12 +102,12 @@
 
       <!-- ALERTS -->
       <section class="view" id="view-alerts">
-        <div class="card" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:16px">
+        <div class="card alerts-head">
           <div>
             <h3 class="section-title" style="margin:0">Expiring within 30 days</h3>
             <p class="muted" style="margin:4px 0 0">Insurance (COI), contract end, and purchase order expirations. Contract heads with an email on file are notified; click an alert to view the message sent.</p>
           </div>
-          <button class="btn" id="sendAlertsBtn" style="flex-shrink:0">✉ Send alert emails</button>
+          <button class="btn" id="sendAlertsBtn">✉ Send alert emails</button>
         </div>
         <div id="alertList"></div>
       </section>
@@ -119,12 +123,14 @@
           </div>
         </div>
         <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Document</th><th>Type</th><th>Linked Vendor</th><th>Uploaded</th><th>Status</th><th></th></tr>
-            </thead>
-            <tbody id="docRows"></tbody>
-          </table>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr><th>Document</th><th>Type</th><th>Linked Vendor</th><th>Uploaded</th><th>Status</th><th></th></tr>
+              </thead>
+              <tbody id="docRows"></tbody>
+            </table>
+          </div>
         </div>
       </section>
     </div>
