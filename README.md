@@ -41,7 +41,9 @@ ConTrackt addresses this by giving the district a single dashboard where:
   days. The contract head is emailed at 30 days and again at 2 weeks; each alert
   is clickable to view the exact message sent.
 - **Document Hub** — searchable list of current + archived documents; open any
-  file through a time-limited presigned URL; archive/restore.
+  file through a time-limited presigned URL. Archive a document straight from
+  its preview (with a confirmation prompt) or from the hub, and restore it
+  anytime from the Archived view.
 - **Fully responsive** — works on large desktops down to phones (mobile-first
   layout, hamburger nav, touch-friendly, safe-area aware).
 

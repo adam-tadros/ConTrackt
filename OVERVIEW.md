@@ -67,7 +67,9 @@ in-memory backend, so the app runs with zero credentials for local previews.
 - **Alerts** lists everything (insurance, contract, or PO) expiring within 30
   days — computed server-side from the stored dates.
 - **Document Hub** provides search across all files, a current/archived toggle,
-  and inline viewing via presigned URLs.
+  and inline viewing via presigned URLs. Documents can be archived directly from
+  the preview (a confirmation prompt explains they'll move to *Archived*) or
+  toggled from the hub, and restored at any time.
 
 ```
 Browser (SPA)
@@ -100,7 +102,9 @@ Lambda: contrackt-web  (WSGI app via apig-wsgi)
 - **Side-by-side review** — the source document renders next to the extracted
   fields during upload.
 - **Multi-document viewer** — the detail drawer and Document Hub open an embedded
-  viewer with tabs for a contract and its matching COI.
+  viewer with tabs for a contract and its matching COI. The viewer includes an
+  **Archive** action (with a "yes/no" confirmation) that moves the file to the
+  Archived list, and a **Restore** action for already-archived documents.
 - **30-day expiration alerts** — for insurance (COI), contract end, and PO end
   dates, with severity based on days remaining.
 - **Email alerts to the contract head** — each contract has a contract head and
@@ -109,7 +113,8 @@ Lambda: contrackt-web  (WSGI app via apig-wsgi)
   documents. Contracts without an email still show an alert; no email is sent.
   Alert boxes are clickable to view the exact message sent.
 - **Searchable Document Hub** — search by filename, type, or vendor; toggle
-  between current and archived documents; archive/restore.
+  between current and archived documents; archive/restore from either the hub or
+  the document preview (archiving asks for confirmation first).
 - **Status tracking** — each contract is automatically classified as active,
   expiring, expired, or unknown based on its end date.
 - **Responsive, mobile-first UI** — a single layout adapts from large desktops
