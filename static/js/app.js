@@ -38,9 +38,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const dept = (c) => c.cat || "Uncategorized";
 const contractStatus = (c) => ({ active: "Active", expiring: "Expiring", expired: "Expired" }[c.status] || "Unknown");
 function insStatus(c) { const d = c.days_to_insurance; if (d == null) return "Unknown"; return d < 0 ? "Lapsed" : d <= 30 ? "Expiring" : "Current"; }
-// Insurance is only a problem when it lapses BEFORE the contract ends (a
-// coverage gap). If the COI outlasts (or matches) the contract, it's fine.
-function coiProblem(c) { const di = c.days_to_insurance, de = c.days_to_end; return di != null && de != null && de >= 0 && di < de && di <= 30; }
+// COI classification is coverage-relevant, not just date-based:
+// - "issue"    = the certificate has already LAPSED while the contract is still
+//                active (a live coverage gap). This is the real problem.
+// - "expiring" = still valid but due within 30 days AND it would lapse before the
+//                contract ends (a reminder to renew — not an issue).
+// If the agreement ends before/at the same time as the COI, there's no gap, so
+// everything is fine regardless of the COI date.
+function coiProblem(c) {
+  const di = c.days_to_insurance, de = c.days_to_end;
+  if (di == null) return false;
+  if (de != null && de < 0) return false;   // contract already ended -> no coverage needed
+  return di < 0;                             // insurance lapsed while the contract is active
+}
+function coiExpiring(c) {
+  const di = c.days_to_insurance, de = c.days_to_end;
+  if (di == null || di < 0 || di > 30) return false;
+  if (de != null && de < 0) return false;    // contract already ended -> no concern
+  return de == null || di < de;              // a gap would open before the contract ends
+}
 const TAG = { Active: "t-green", Expiring: "t-amber", Expired: "t-red", Unknown: "t-slate", Current: "t-green", Lapsed: "t-red", Open: "t-green", Closing: "t-amber", Closed: "t-slate" };
 const docVendor = (cid) => { const c = state.contracts.find((x) => x.id === cid); return c ? c.vendor : ""; };
 
@@ -55,7 +71,8 @@ function showView(v, btn) {
   // Hero belongs to the dashboard only
   $("#hero").style.display = v === "dashboard" ? "" : "none";
   if (v === "upload") resetUpload();
-  if (v === "alerts" && !state.alertsNotified) { state.alertsNotified = true; sendAlertEmails(true); }
+  // Alerts are sent by a scheduled backend job (daily), not by visiting this
+  // page. The Alerts view is read-only: it lists what has gone out.
 }
 
 /* ===== Data load ===== */
@@ -165,20 +182,22 @@ async function openDetail(id) {
   let c;
   try { c = await api("/api/contracts/" + id); } catch (e) { return toast(e.message, true); }
   state.detail = c;
-  const st = contractStatus(c), is = insStatus(c);
-  const prob = coiProblem(c);   // insurance lapses before the contract ends
+  const st = contractStatus(c);
+  const prob = coiProblem(c);   // coverage gap: COI lapsed while the contract is active
+  const soon = coiExpiring(c);  // COI due within 30 days — a renewal reminder, not an issue
   const docs = c.document_records || [];
   const agreement = docs.find((d) => d.type !== "coi");
   const coi = docs.find((d) => d.type === "coi");
   const pill = (cls, txt) => `<span class="pill ${cls}">${esc(txt)}</span>`;
   const cCls = st === "Active" ? "ok" : st === "Expiring" ? "warn" : "bad";
-  const iCls = prob ? (is === "Lapsed" ? "bad" : "warn") : "ok";
+  const iCls = prob ? "bad" : soon ? "warn" : "ok";
+  const iPill = prob ? "COI lapsed" : soon ? "COI expiring" : "COI OK";
 
   const rec = [];
   if (st === "Expired") rec.push("Cancel or issue a new agreement — contract is expired.");
   else if (st === "Expiring") rec.push(`Renew or extend the agreement before ${fmt(c.end)}.`);
-  if (prob && is === "Lapsed") rec.push("Request a current Certificate of Insurance — coverage lapsed before the contract ends.");
-  else if (prob) rec.push(`Request an updated COI before ${fmt(c.ins)} — it lapses before the contract ends.`);
+  if (prob) rec.push("Request a current Certificate of Insurance — coverage has lapsed while the contract is still active.");
+  else if (soon) rec.push(`Insurance expires ${fmt(c.ins)} — request an updated COI before it lapses.`);
   if (String(c.addl).toLowerCase() !== "yes") rec.push("Obtain an additional-insured endorsement naming the District.");
   if (!rec.length) rec.push("No action needed — contract and insurance are in good standing.");
 
@@ -200,7 +219,7 @@ async function openDetail(id) {
     <div class="body">
       <div class="pills" style="margin-bottom:14px">
         ${pill(cCls, st === "Expiring" ? "Expiring soon" : st)}
-        ${pill(iCls, prob ? (is === "Lapsed" ? "COI lapsed" : "COI expiring") : "COI OK")}
+        ${pill(iCls, iPill)}
         ${String(c.addl).toLowerCase() === "yes" ? "" : pill("warn", "No add’l insured")}
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
@@ -228,7 +247,7 @@ async function openDetail(id) {
       <div class="sec">Lifecycle tracking</div>
       <div class="track">
         <div class="track-row"><div><div class="tt">Contract term</div><div class="ts">Ends ${fmt(c.end)}</div></div>${pill(cCls, st === "Expiring" ? "Expiring soon" : st)}</div>
-        <div class="track-row"><div><div class="tt">Insurance / COI</div><div class="ts">${prob ? "Lapses " + fmt(c.ins) + " — before the contract ends" : "Valid through " + fmt(c.ins)}</div></div>${pill(iCls, prob ? (is === "Lapsed" ? "Lapsed" : "Expiring") : "OK")}</div>
+        <div class="track-row"><div><div class="tt">Insurance / COI</div><div class="ts">${prob ? "Lapsed " + fmt(c.ins) + " — coverage gap while contract active" : soon ? "Expires " + fmt(c.ins) + " — renew before it lapses" : "Valid through " + fmt(c.ins)}</div></div>${pill(iCls, prob ? "Lapsed" : soon ? "Expiring" : "OK")}</div>
       </div>
 
       <div class="sec">Documents (${docs.length})</div>
@@ -314,21 +333,6 @@ function buildAlerts() {
       <div class="eb">This contract (${esc(kinds)}) is within 30 days of expiry. ${g.has_email ? "The contract head is notified at 30 days and again at 2 weeks." : "No contract-head email is on file, so no email is sent — this is an on-screen alert only."} ${click ? "<span class='mini'>Click to view the message sent.</span>" : ""}</div>
     </div>`;
   }).join("") || `<div style="color:var(--muted);padding:20px">No contracts expiring within 30 days.</div>`;
-}
-async function sendAlertEmails(silent) {
-  try {
-    const res = await api("/api/alerts/notify", { method: "POST" });
-    const s = res.summary || {};
-    if (!silent) {
-      const parts = [];
-      if (s.sent) parts.push(`${s.sent} sent`);
-      if (s.already_sent) parts.push(`${s.already_sent} already sent`);
-      if (s.skipped_no_email) parts.push(`${s.skipped_no_email} no-email`);
-      if (s.failed) parts.push(`${s.failed} failed`);
-      toast("Alert emails: " + (parts.join(", ") || "nothing to send"));
-    }
-    await loadAll();
-  } catch (e) { if (!silent) toast(e.message, true); }
 }
 async function openMessage(mid) {
   if (!mid) return;

@@ -13,6 +13,8 @@ deploy/lambda_build/
 deploy/lambda.zip
 deploy/web_build/
 deploy/web.zip
+deploy/alerts_build/
+deploy/alerts.zip
 deploy/_*.json
 deploy/_*.txt
 deploy/_*.ps1
