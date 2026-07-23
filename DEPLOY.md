@@ -135,3 +135,52 @@ eb terminate contrackt-env
 #   aws dynamodb delete-table --table-name contrackt_contracts
 #   aws dynamodb delete-table --table-name contrackt_documents
 ```
+
+## Event-driven parsing with AWS Lambda
+
+Parsing runs in a Lambda function (`contrackt-parser`) triggered by S3 upload
+events, instead of blocking the web request.
+
+### How it works
+1. Flask creates the document record (`parse_status=pending`), then writes the
+   file to S3 under `uploads/`.
+2. The S3 `ObjectCreated` event invokes the Lambda.
+3. The Lambda finds the pending record, calls Bedrock/Textract (reusing
+   `parser.py` + `db.py`), and writes the fields back with `parse_status=done`.
+4. The browser polls `GET /api/documents/<id>` until parsing completes.
+
+Enable it on the web tier by setting the environment variable:
+
+```powershell
+eb setenv ASYNC_PARSE=1      # or set it in the EB option settings
+```
+
+Without `ASYNC_PARSE` (and in demo mode), the app falls back to inline parsing.
+
+### Deploying / updating the Lambda
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\deploy_lambda.ps1
+```
+
+This script (idempotent):
+- packages `handler.py` + shared modules + a bundled boto3 into `deploy/lambda.zip`
+- uploads it to S3
+- creates/updates the `contrackt-lambda-role` (S3 read, DynamoDB documents
+  read/write, Bedrock invoke, Textract, CloudWatch Logs — see
+  `deploy/lambda-iam-policy.json`)
+- creates/updates the `contrackt-parser` function (Python 3.13)
+- grants S3 permission to invoke it and wires the `s3:ObjectCreated:*`
+  notification on the `uploads/` prefix
+
+### Troubleshooting the Lambda
+
+```powershell
+# tail logs
+aws logs tail /aws/lambda/contrackt-parser --follow --profile kiro-dev --region us-west-2
+```
+
+- Document stuck on `pending` → the S3 notification or invoke permission is
+  missing; re-run `deploy_lambda.ps1`.
+- `parse_status=error` with an AccessDenied → the Lambda role is missing Bedrock
+  or S3 permissions.
