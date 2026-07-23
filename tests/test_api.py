@@ -5,6 +5,7 @@ import pytest
 
 import app as flask_app
 import db
+import notifications
 import parser as ai_parser
 import storage
 from tests.fakes import FakeTable
@@ -18,8 +19,10 @@ def iso(offset):
 def client(monkeypatch):
     contracts = FakeTable()
     documents = FakeTable()
+    messages = FakeTable()
     monkeypatch.setattr(db, "_contracts_table", lambda: contracts)
     monkeypatch.setattr(db, "_documents_table", lambda: documents)
+    monkeypatch.setattr(db, "_messages_table", lambda: messages)
 
     # seed one active + one expiring-insurance contract
     db.create_contract(
@@ -144,6 +147,43 @@ def test_get_document(client):
     r = client.get("/api/documents/d1")
     assert r.status_code == 200
     assert r.get_json()["filename"] == "acme.pdf"
+
+
+def test_alerts_include_email_info(client):
+    # c2 is expiring; give it a head email so the alert reports has_email
+    db.update_contract("c2", {"contract_head": "Sam", "contract_head_email": "sam@fhda.edu"})
+    alerts = client.get("/api/alerts").get_json()
+    c2 = [a for a in alerts if a["contract_id"] == "c2"][0]
+    assert c2["has_email"] is True
+    assert c2["contract_head"] == "Sam"
+    assert "message_id" in c2  # None until notified
+
+
+def test_notify_and_view_message(client, monkeypatch):
+    monkeypatch.setattr(flask_app.config, "DEMO_MODE", False)
+    monkeypatch.setattr(flask_app.config, "SES_FROM_EMAIL", "sender@example.com")
+    monkeypatch.setattr(flask_app.config, "ALERT_TEST_RECIPIENT", "test@example.com")
+    monkeypatch.setattr(notifications, "_send_ses", lambda *a, **k: "ses-xyz")
+    db.update_contract("c2", {"contract_head_email": "sam@fhda.edu"})
+
+    r = client.post("/api/alerts/notify")
+    assert r.status_code == 200
+    assert r.get_json()["summary"].get("sent", 0) >= 1
+
+    # the alert now carries a message_id we can open
+    alerts = client.get("/api/alerts").get_json()
+    c2 = [a for a in alerts if a["contract_id"] == "c2"][0]
+    assert c2["message_id"]
+    msg = client.get(f"/api/messages/{c2['message_id']}").get_json()
+    assert "expire in 30 days" in msg["body_text"]
+    assert msg["send_status"] == "sent"
+
+
+def test_document_view_redirects(client, monkeypatch):
+    monkeypatch.setattr(storage, "presigned_url", lambda *a, **k: "https://signed.example")
+    r = client.get("/api/documents/d1/view", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"] == "https://signed.example"
 
 
 def test_upload_async_sets_pending_and_skips_inline_parse(client, monkeypatch):

@@ -7,6 +7,8 @@ const FIELDS = [
   { key: "cat", label: "Category", type: "text" },
   { key: "sub", label: "Subcategory", type: "text" },
   { key: "college", label: "Campus", type: "select", options: ["", "Foothill", "De Anza", "District"] },
+  { key: "contract_head", label: "Contract Head", type: "text" },
+  { key: "contract_head_email", label: "Contract Head Email", type: "text" },
   { key: "value", label: "Value ($)", type: "number" },
   { key: "start", label: "Start Date", type: "date" },
   { key: "end", label: "End Date", type: "date" },
@@ -76,6 +78,12 @@ function showView(name) {
   const [title, sub] = VIEW_META[name];
   $("#viewTitle").textContent = title;
   $("#viewSub").textContent = sub;
+
+  // Opening the Alerts tab sends any pending alert emails once per session.
+  if (name === "alerts" && !state.alertsNotified) {
+    state.alertsNotified = true;
+    sendAlertEmails(true);
+  }
 }
 
 $("#nav").addEventListener("click", (e) => {
@@ -406,20 +414,85 @@ function renderAlerts() {
   el.innerHTML = list
     .map((a) => {
       const cls = a.days <= 7 ? "crit" : "warn";
-      return `<div class="alert-item ${cls}" data-id="${esc(a.contract_id)}">
+      let mail;
+      if (!a.has_email) {
+        mail = `<span class="muted">No email on file for ${esc(a.contract_head || "contract head")} — alert only</span>`;
+      } else if (a.message_status === "sent") {
+        mail = `<span class="badge active">✉ Emailed ${esc(a.contract_head || "")}</span> <span class="muted">click to view the message</span>`;
+      } else if (a.message_status === "demo") {
+        mail = `<span class="badge expiring">✉ Email prepared (demo)</span> <span class="muted">click to view</span>`;
+      } else if (a.message_status === "failed") {
+        mail = `<span class="badge expired">Email failed</span> <span class="muted">click to view details</span>`;
+      } else {
+        mail = `<span class="muted">Email pending for ${esc(a.contract_head || "")} — use "Send alert emails"</span>`;
+      }
+      return `<div class="alert-item ${cls}" data-id="${esc(a.contract_id)}" data-msg="${esc(a.message_id || "")}">
         <div class="days">${a.days}<small>DAYS</small></div>
         <div class="meta">
           <b>${esc(a.vendor || "Unknown vendor")}</b> &nbsp;<span class="muted">${esc(a.poly || "")}</span>
           <div class="sub">${kindLabel[a.kind]} expires ${esc(a.date)} · ${esc(a.college || "")}</div>
+          <div class="sub">${mail}</div>
         </div>
         <span class="badge ${a.kind === "insurance" ? "expiring" : "expired"}">${a.kind}</span>
       </div>`;
     })
     .join("");
   $$("#alertList .alert-item").forEach((it) =>
-    it.addEventListener("click", () => openContract(it.dataset.id))
+    it.addEventListener("click", () => {
+      const msg = it.dataset.msg;
+      if (msg) openMessage(msg);
+      else openContract(it.dataset.id);
+    })
   );
 }
+
+async function sendAlertEmails(silent) {
+  try {
+    const res = await api("/api/alerts/notify", { method: "POST" });
+    const s = res.summary || {};
+    if (!silent) {
+      const parts = [];
+      if (s.sent) parts.push(`${s.sent} sent`);
+      if (s.demo) parts.push(`${s.demo} prepared (demo)`);
+      if (s.already_sent) parts.push(`${s.already_sent} already sent`);
+      if (s.skipped_no_email) parts.push(`${s.skipped_no_email} no-email`);
+      if (s.failed) parts.push(`${s.failed} failed`);
+      toast("Alert emails: " + (parts.join(", ") || "nothing to send"));
+    }
+    await loadAll();
+  } catch (e) {
+    if (!silent) toast(e.message, true);
+  }
+}
+
+async function openMessage(mid) {
+  try {
+    const m = await api(`/api/messages/${mid}`);
+    $("#msgSubject").textContent = m.subject || "Alert message";
+    const status =
+      m.send_status === "sent"
+        ? `sent to ${m.to_actual}`
+        : m.send_status === "demo"
+        ? "prepared (demo — not actually sent)"
+        : m.send_status === "failed"
+        ? `failed: ${m.error || ""}`
+        : m.send_status || "";
+    $("#msgMeta").textContent = `To: ${m.to_email || "-"}  ·  ${status}  ·  ${(m.sent_at || "").slice(0, 19).replace("T", " ")}`;
+    $("#msgBody").innerHTML = m.body_html || `<pre>${esc(m.body_text || "")}</pre>`;
+    $("#msgBackdrop").classList.add("open");
+    $("#msgModal").classList.add("open");
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function closeMessage() {
+  $("#msgBackdrop").classList.remove("open");
+  $("#msgModal").classList.remove("open");
+}
+$("#msgClose").addEventListener("click", closeMessage);
+$("#msgBackdrop").addEventListener("click", closeMessage);
+$("#sendAlertsBtn").addEventListener("click", () => sendAlertEmails(false));
 
 // ---- Document Hub ----------------------------------------------------------
 $("#docSeg").addEventListener("click", (e) => {

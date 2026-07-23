@@ -215,3 +215,15 @@ label.field span { display: block; font-size: 12px; color: var(--muted); margin-
 @media (max-width: 1000px) { .extract-layout { grid-template-columns: 1fr; } .extract-preview { height: 380px; position: static; } }
 
 .view-docs-btn { margin-right: auto; }
+
+/* Sent-message modal */
+.msg-modal {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(.98);
+  width: 560px; max-width: 92vw; max-height: 86vh; background: #fff; border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0,0,0,.4); z-index: 80; display: none; flex-direction: column;
+  opacity: 0; transition: opacity .15s ease, transform .15s ease;
+}
+.msg-modal.open { display: flex; opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.msg-modal .mhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.msg-modal .mbody { padding: 18px; overflow-y: auto; }
+.msg-modal .mbody a { color: var(--brand); }

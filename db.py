@@ -28,6 +28,25 @@ CONTRACT_FIELDS = [
     "poEnd",    # PO end date (YYYY-MM-DD)
     "ins",      # insurance / COI expiration date (YYYY-MM-DD)
     "addl",     # additional insured endorsement (Yes/No/text)
+    "contract_head",        # name of the responsible person
+    "contract_head_email",  # their email (blank => no alert email sent)
+]
+
+MESSAGE_FIELDS = [
+    "contract_id",
+    "kind",             # e.g. "expiry"
+    "to_email",         # the contract head's email (display)
+    "to_actual",        # where it was actually delivered (test override)
+    "subject",
+    "body_html",
+    "body_text",
+    "website_url",
+    "agreement_doc_id",
+    "coi_doc_id",
+    "send_status",      # sent | demo | failed
+    "ses_message_id",
+    "error",
+    "sent_at",
 ]
 
 DOCUMENT_FIELDS = [
@@ -59,6 +78,13 @@ def _documents_table():
         import memstore
         return memstore.DOCUMENTS
     return dynamodb_resource().Table(config.DDB_DOCUMENTS_TABLE)
+
+
+def _messages_table():
+    if config.DEMO_MODE:
+        import memstore
+        return memstore.MESSAGES
+    return dynamodb_resource().Table(config.DDB_MESSAGES_TABLE)
 
 
 # --------------------------------------------------------------------------
@@ -262,3 +288,46 @@ def update_document(did, updates, table=None):
         ReturnValues="ALL_NEW",
     )
     return from_dynamo(resp.get("Attributes", {}))
+
+
+# --------------------------------------------------------------------------
+# Messages (sent alert emails)
+# --------------------------------------------------------------------------
+def create_message(data, table=None):
+    """Store a sent-message record. `id` is caller-provided (deterministic)."""
+    table = table or _messages_table()
+    mid = data.get("id") or "m_" + uuid.uuid4().hex[:12]
+    item = {"id": mid, "sent_at": data.get("sent_at") or _now()}
+    for f in MESSAGE_FIELDS:
+        if data.get(f) is not None:
+            item[f] = data[f]
+    table.put_item(Item=to_dynamo(item))
+    return from_dynamo(item)
+
+
+def get_message(mid, table=None):
+    table = table or _messages_table()
+    item = table.get_item(Key={"id": mid}).get("Item")
+    return from_dynamo(item) if item else None
+
+
+def list_messages(table=None):
+    table = table or _messages_table()
+    items = []
+    resp = table.scan()
+    items.extend(resp.get("Items", []))
+    while "LastEvaluatedKey" in resp:
+        resp = table.scan(ExclusiveStartKey=resp["LastEvaluatedKey"])
+        items.extend(resp.get("Items", []))
+    return [from_dynamo(i) for i in items]
+
+
+def message_id_for(contract):
+    """Deterministic message id for a contract's current expiry window.
+
+    Includes the end + insurance dates so a renewed contract (new dates) can
+    trigger a fresh notification, while re-processing the same dates does not
+    resend.
+    """
+    cid = contract.get("id")
+    return f"m_{cid}_{contract.get('end') or 'na'}_{contract.get('ins') or 'na'}"

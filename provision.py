@@ -103,9 +103,28 @@ def create_documents_table():
     print(f"Creating DynamoDB table: {name} ...")
 
 
+def create_messages_table():
+    ddb = dynamodb_client()
+    name = config.DDB_MESSAGES_TABLE
+    if _table_exists(ddb, name):
+        print(f"DynamoDB table already exists: {name}")
+        return
+    ddb.create_table(
+        TableName=name,
+        BillingMode="PAY_PER_REQUEST",
+        AttributeDefinitions=[{"AttributeName": "id", "AttributeType": "S"}],
+        KeySchema=[{"AttributeName": "id", "KeyType": "HASH"}],
+    )
+    print(f"Creating DynamoDB table: {name} ...")
+
+
 def wait_active():
     ddb = dynamodb_client()
-    for name in (config.DDB_CONTRACTS_TABLE, config.DDB_DOCUMENTS_TABLE):
+    for name in (
+        config.DDB_CONTRACTS_TABLE,
+        config.DDB_DOCUMENTS_TABLE,
+        config.DDB_MESSAGES_TABLE,
+    ):
         for _ in range(30):
             try:
                 desc = ddb.describe_table(TableName=name)
@@ -122,6 +141,7 @@ def main():
     create_bucket()
     create_contracts_table()
     create_documents_table()
+    create_messages_table()
     wait_active()
     print("\nProvisioning complete.")
     print(

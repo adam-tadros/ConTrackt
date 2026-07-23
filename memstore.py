@@ -47,6 +47,7 @@ class InMemoryTable:
 # Singletons shared across the process.
 CONTRACTS = InMemoryTable()
 DOCUMENTS = InMemoryTable()
+MESSAGES = InMemoryTable()
 
 # key -> (bytes, content_type)
 BLOBS = {}

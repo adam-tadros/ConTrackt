@@ -36,6 +36,14 @@ _CATEGORIES = [
     ("Software", "IT Consulting"),
 ]
 _COLLEGES = ["Foothill", "De Anza", "District"]
+_HEADS = ["Dana Ruiz", "Marcus Lee", "Priya Shah", "Tom Becker", "Elena Cortez"]
+
+
+def _head_for(i):
+    """Return (name, email). Roughly 1 in 6 has no email (alert-only case)."""
+    head = _HEADS[i % len(_HEADS)]
+    email = "" if i % 6 == 5 else head.lower().replace(" ", ".") + "@fhda.edu"
+    return head, email
 # (contract end offset, insurance expiry offset) in days from today.
 _DATE_PLANS = [
     (-25, -25),   # expired  -> archived
@@ -112,6 +120,7 @@ def seed(wipe_first=False):
         end_off, ins_off = _DATE_PLANS[i % len(_DATE_PLANS)]
         expired = end_off < 0
         vendor = p["vendor"]
+        head, head_email = _head_for(i)
 
         db.create_contract(
             {
@@ -121,6 +130,8 @@ def seed(wipe_first=False):
                 "cat": cat,
                 "sub": sub,
                 "college": college,
+                "contract_head": head,
+                "contract_head_email": head_email,
                 "scope": f"{sub} services provided by {vendor} for the district.",
                 "summary": f"Sample {cat.lower()} agreement with {vendor}.",
                 "start": _iso(-365),
@@ -139,6 +150,22 @@ def seed(wipe_first=False):
 
     print(f"Seeded {count} contracts (with agreement + COI documents).")
     return count
+
+
+def backfill_heads():
+    """Set contract_head/contract_head_email on already-seeded contracts
+    without recreating their documents. Safe to run against live data."""
+    pairs = _scan_pairs()
+    n = 0
+    for i, num in enumerate(pairs):
+        cid = f"c_sample_{num}"
+        if not db.get_contract(cid):
+            continue
+        head, email = _head_for(i)
+        db.update_contract(cid, {"contract_head": head, "contract_head_email": email})
+        n += 1
+    print(f"Backfilled contract heads on {n} contracts.")
+    return n
 
 
 def wipe():

@@ -5,10 +5,11 @@ DynamoDB (data), S3 (documents), and Bedrock/Textract (AI extraction).
 """
 import logging
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, redirect, render_template, request
 
 import config
 import db
+import notifications
 import parser as ai_parser
 import storage
 
@@ -159,6 +160,19 @@ def document_url(did):
     return jsonify({"url": url})
 
 
+@app.route("/api/documents/<did>/view", methods=["GET"])
+def document_view(did):
+    """Redirect to a freshly-signed URL. Safe to embed in emails (never stale)."""
+    doc = db.get_document(did)
+    if not doc:
+        return _err("document not found", 404)
+    try:
+        url = storage.presigned_url(doc["s3_key"], download_name=doc.get("filename"))
+    except Exception as e:  # noqa: BLE001
+        return _err(f"could not generate URL: {e}", 502)
+    return redirect(url, code=302)
+
+
 @app.route("/api/documents/<did>", methods=["GET"])
 def get_document(did):
     doc = db.get_document(did)
@@ -280,31 +294,65 @@ def stats():
 @app.route("/api/alerts", methods=["GET"])
 def alerts():
     window = config.ALERT_WINDOW_DAYS
+    messages = {m["id"]: m for m in db.list_messages()}
     out = []
-    for c in db.list_contracts():
-        c = db.enrich(c)
-        items = []
+    for raw in db.list_contracts():
+        c = db.enrich(raw)
         di = c.get("days_to_insurance")
         de = c.get("days_to_end")
         dp = c.get("days_to_po_end")
+        kinds = []
         if di is not None and 0 <= di <= window:
-            items.append({"kind": "insurance", "days": di, "date": c.get("ins")})
+            kinds.append(("insurance", di, c.get("ins")))
         if de is not None and 0 <= de <= window:
-            items.append({"kind": "contract", "days": de, "date": c.get("end")})
+            kinds.append(("contract", de, c.get("end")))
         if dp is not None and 0 <= dp <= window:
-            items.append({"kind": "po", "days": dp, "date": c.get("poEnd")})
-        for it in items:
+            kinds.append(("po", dp, c.get("poEnd")))
+        if not kinds:
+            continue
+
+        head_email = (c.get("contract_head_email") or "").strip()
+        msg = messages.get(db.message_id_for(c))
+        for kind, days, dt in kinds:
             out.append(
                 {
                     "contract_id": c["id"],
                     "vendor": c.get("vendor"),
                     "college": c.get("college"),
                     "poly": c.get("poly"),
-                    **it,
+                    "contract_head": c.get("contract_head"),
+                    "contract_head_email": head_email or None,
+                    "has_email": bool(head_email),
+                    "message_id": msg["id"] if msg else None,
+                    "message_status": msg.get("send_status") if msg else None,
+                    "kind": kind,
+                    "days": days,
+                    "date": dt,
                 }
             )
     out.sort(key=lambda a: a["days"])
     return jsonify(out)
+
+
+def _website_url():
+    return (config.WEBSITE_URL or request.url_root).rstrip("/")
+
+
+@app.route("/api/alerts/notify", methods=["POST"])
+def alerts_notify():
+    results = notifications.notify_expiring(_website_url())
+    summary = {}
+    for r in results:
+        summary[r["status"]] = summary.get(r["status"], 0) + 1
+    return jsonify({"summary": summary, "results": results})
+
+
+@app.route("/api/messages/<mid>", methods=["GET"])
+def get_message(mid):
+    m = db.get_message(mid)
+    if not m:
+        return _err("message not found", 404)
+    return jsonify(m)
 
 
 def _demo_seed_if_empty():

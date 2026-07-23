@@ -98,9 +98,12 @@
 
       <!-- ALERTS -->
       <section class="view" id="view-alerts">
-        <div class="card" style="margin-bottom:16px">
-          <h3 class="section-title">Expiring within 30 days</h3>
-          <p class="muted" style="margin-top:-4px">Insurance (COI), contract end, and purchase order expirations.</p>
+        <div class="card" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:16px">
+          <div>
+            <h3 class="section-title" style="margin:0">Expiring within 30 days</h3>
+            <p class="muted" style="margin:4px 0 0">Insurance (COI), contract end, and purchase order expirations. Contract heads with an email on file are notified; click an alert to view the message sent.</p>
+          </div>
+          <button class="btn" id="sendAlertsBtn" style="flex-shrink:0">✉ Send alert emails</button>
         </div>
         <div id="alertList"></div>
       </section>
@@ -152,6 +155,19 @@
       </div>
     </div>
     <div class="vbody" id="viewerBody"></div>
+  </div>
+
+  <!-- Sent-message viewer -->
+  <div class="viewer-backdrop" id="msgBackdrop"></div>
+  <div class="msg-modal" id="msgModal">
+    <div class="mhead">
+      <div>
+        <b id="msgSubject">Message</b>
+        <div class="muted" id="msgMeta" style="font-size:12px;margin-top:3px"></div>
+      </div>
+      <button class="close-x" id="msgClose">&times;</button>
+    </div>
+    <div class="mbody" id="msgBody"></div>
   </div>
 
   <div class="toast" id="toast"></div>

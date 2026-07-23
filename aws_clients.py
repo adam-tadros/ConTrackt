@@ -46,6 +46,11 @@ def textract_client():
     return boto3.client("textract", region_name=config.TEXTRACT_REGION)
 
 
+@lru_cache(maxsize=1)
+def ses_client():
+    return boto3.client("ses", region_name=config.SES_REGION)
+
+
 def reset_caches():
     """Clear cached clients (used by tests that inject fakes)."""
     for fn in (
@@ -54,5 +59,6 @@ def reset_caches():
         dynamodb_client,
         bedrock_runtime,
         textract_client,
+        ses_client,
     ):
         fn.cache_clear()

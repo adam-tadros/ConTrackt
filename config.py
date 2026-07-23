@@ -37,6 +37,7 @@ PRESIGN_EXPIRY = _int("PRESIGN_EXPIRY", 3600)  # seconds
 # --- DynamoDB -------------------------------------------------------------
 DDB_CONTRACTS_TABLE = os.environ.get("DDB_CONTRACTS_TABLE", "contrackt_contracts")
 DDB_DOCUMENTS_TABLE = os.environ.get("DDB_DOCUMENTS_TABLE", "contrackt_documents")
+DDB_MESSAGES_TABLE = os.environ.get("DDB_MESSAGES_TABLE", "contrackt_messages")
 
 # --- Bedrock / AI ---------------------------------------------------------
 # Model must support the Converse API with document input blocks and must be
@@ -48,6 +49,16 @@ BEDROCK_MODEL_ID = os.environ.get(
 
 # --- Textract (fallback path) --------------------------------------------
 TEXTRACT_REGION = os.environ.get("TEXTRACT_REGION", AWS_REGION)
+
+# --- SES email alerts -----------------------------------------------------
+SES_REGION = os.environ.get("SES_REGION", AWS_REGION)
+# Verified SES sender identity (in sandbox, must be verified).
+SES_FROM_EMAIL = os.environ.get("SES_FROM_EMAIL", "")
+# For testing: if set, ALL alert emails are delivered here instead of the
+# contract head's real address (the head's address is still recorded).
+ALERT_TEST_RECIPIENT = os.environ.get("ALERT_TEST_RECIPIENT", "")
+# Public base URL used in email links; falls back to the request host.
+WEBSITE_URL = os.environ.get("WEBSITE_URL", "")
 
 # --- App behaviour --------------------------------------------------------
 # When true (and not demo), uploads are parsed asynchronously by the Lambda
