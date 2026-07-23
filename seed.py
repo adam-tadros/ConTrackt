@@ -168,6 +168,58 @@ def backfill_heads():
     return n
 
 
+def reparse():
+    """Re-read every contract's actual documents from S3 and let Bedrock
+    populate the fields from real content (replaces the original dummy seed
+    values). The agreement drives most fields; the COI supplies the insurance
+    expiry. contract_head / contract_head_email are preserved (not in the PDF).
+    """
+    import parser as ai_parser
+    import storage
+
+    docs_by_c = {}
+    for d in db.list_documents():
+        docs_by_c.setdefault(d.get("contract_id"), []).append(d)
+
+    keys = ["vendor", "cat", "sub", "college", "scope", "summary",
+            "start", "end", "value", "po", "poEnd", "ins", "addl"]
+    n = 0
+    for contract in db.list_contracts():
+        cid = contract["id"]
+        docs = docs_by_c.get(cid, [])
+        agr = next((d for d in docs if d.get("type") != "coi"), None)
+        coi = next((d for d in docs if d.get("type") == "coi"), None)
+        if not agr:
+            print(f"skip {cid}: no agreement document")
+            continue
+        try:
+            data = storage.get_bytes(agr["s3_key"])
+            fields = ai_parser.parse_document(
+                data, agr.get("filename") or "agreement.pdf", agr.get("content_type"))
+        except Exception as e:  # noqa: BLE001
+            print(f"error {cid}: {e}")
+            continue
+        upd = {k: fields[k] for k in keys if fields.get(k) not in (None, "")}
+        # COI is authoritative for the insurance expiry
+        if coi:
+            try:
+                cdata = storage.get_bytes(coi["s3_key"])
+                cf = ai_parser.parse_document(
+                    cdata, coi.get("filename") or "coi.pdf", coi.get("content_type"))
+                ins = cf.get("ins") or cf.get("end")
+                if ins:
+                    upd["ins"] = ins
+            except Exception as e:  # noqa: BLE001
+                print(f"  COI parse error {cid}: {e}")
+        if upd:
+            db.update_contract(cid, upd)
+            n += 1
+            print(f"{cid}: {upd.get('vendor')} | end={upd.get('end')} "
+                  f"| value={upd.get('value')} | ins={upd.get('ins')}")
+    print(f"\nReparsed {n} contracts from their real documents.")
+    return n
+
+
 def wipe():
     for num in _scan_pairs():
         cid = f"c_sample_{num}"

@@ -160,6 +160,7 @@ function buildDeptFilter() {
 async function openDetail(id) {
   let c;
   try { c = await api("/api/contracts/" + id); } catch (e) { return toast(e.message, true); }
+  state.detail = c;
   const st = contractStatus(c), is = insStatus(c);
   const prob = coiProblem(c);   // insurance lapses before the contract ends
   const docs = c.document_records || [];
@@ -199,9 +200,10 @@ async function openDetail(id) {
         ${String(c.addl).toLowerCase() === "yes" ? "" : pill("warn", "No add’l insured")}
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+        <button class="btn" onclick="editDetail()">✎ Edit</button>
         ${docBtn(agreement, "📄 Contract")}
         ${docBtn(coi, "🛡 COI")}
-        <button class="btn" onclick="closeDetail();document.getElementById('navNotifBtn').click()">Alerts</button>
+        <button class="btn ghost" onclick="closeDetail();document.getElementById('navNotifBtn').click()">Alerts</button>
       </div>
 
       <div class="aibox"><div class="lab">✨ AI scope summary</div><p>${esc(c.summary || "No summary extracted.")}</p></div>
@@ -237,6 +239,46 @@ async function openDetail(id) {
   $("#drawer").scrollTop = 0;
 }
 function closeDetail() { const d = $("#drawer"), o = $("#ovl"); if (d) d.classList.remove("show"); if (o) o.classList.remove("show"); }
+
+/* ===== Edit a contract from the detail drawer ===== */
+function collectFrom(root) {
+  const out = {};
+  $$(`${root} [data-key]`).forEach((el) => {
+    let v = el.value;
+    if (el.type === "number") v = v === "" ? null : Number(v);
+    else if (v === "") v = null;
+    out[el.dataset.key] = v;
+  });
+  return out;
+}
+function editDetail() {
+  const c = state.detail;
+  if (!c) return;
+  $("#drawer").innerHTML = `
+    <div class="dh">
+      <button class="close" onclick="openDetail('${esc(c.id)}')">×</button>
+      <div class="m">Edit contract</div>
+      <h2>${esc(c.vendor || "Contract")}</h2>
+    </div>
+    <div class="body">
+      <div id="editRows">${FIELDS.map((f) => `<div class="exrow"><div class="k">${f.label}</div><div class="v">${fieldInput(f, c[f.k])}</div></div>`).join("")}</div>
+      <div style="display:flex;gap:10px;margin-top:16px">
+        <button class="btn ghost" onclick="openDetail('${esc(c.id)}')">Cancel</button>
+        <button class="btn" style="flex:1;justify-content:center" onclick="saveDetail('${esc(c.id)}')">Save changes</button>
+      </div>
+    </div>`;
+  $("#drawer").scrollTop = 0;
+}
+async function saveDetail(id) {
+  const payload = collectFrom("#editRows");
+  if (!payload.vendor) return toast("Vendor is required", true);
+  try {
+    await api("/api/contracts/" + id, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    toast("Contract updated");
+    await loadAll();
+    openDetail(id);
+  } catch (e) { toast(e.message, true); }
+}
 
 /* ===== Notifications (real /api/alerts) ===== */
 function buildAlerts() {
