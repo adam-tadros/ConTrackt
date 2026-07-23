@@ -1,46 +1,25 @@
 "use strict";
 
-// ---- Field metadata (labels + input types) --------------------------------
-const FIELDS = [
-  { key: "poly", label: "Agreement / Policy #", type: "text" },
-  { key: "vendor", label: "Vendor", type: "text" },
-  { key: "cat", label: "Category", type: "text" },
-  { key: "sub", label: "Subcategory", type: "text" },
-  { key: "college", label: "Campus", type: "select", options: ["", "Foothill", "De Anza", "District"] },
-  { key: "contract_head", label: "Contract Head", type: "text" },
-  { key: "contract_head_email", label: "Contract Head Email", type: "text" },
-  { key: "value", label: "Value ($)", type: "number" },
-  { key: "start", label: "Start Date", type: "date" },
-  { key: "end", label: "End Date", type: "date" },
-  { key: "po", label: "PO Number", type: "text" },
-  { key: "poEnd", label: "PO End Date", type: "date" },
-  { key: "ins", label: "Insurance Expiry", type: "date" },
-  { key: "addl", label: "Additional Insured", type: "select", options: ["", "Yes", "No"] },
-  { key: "scope", label: "Scope of Work", type: "textarea", full: true },
-  { key: "summary", label: "AI Summary", type: "textarea", full: true },
-];
-
-// ---- State ----------------------------------------------------------------
+/* ===== State ===== */
 const state = {
-  contracts: [],
-  documents: [],
-  alerts: [],
-  stats: null,
-  pendingDoc: null, // { document, fields } from an upload awaiting save
-  docScope: "current",
-  docQuery: "",
+  contracts: [], documents: [], alerts: [],
+  sortK: "end", sortDir: 1,
+  pendingUpload: null,   // { document, fields } during an upload
+  docScope: "current", docQuery: "",
 };
 
-// ---- Small helpers ---------------------------------------------------------
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const esc = (s) =>
-  String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const money = (n) =>
-  n == null ? "-" : "$" + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
-const fmtDate = (d) => (d ? d : "-");
-
+/* ===== Helpers ===== */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const usd = (n) => n == null || n === "" ? "—" : "$" + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+function fmt(d) {
+  if (!d) return "—";
+  const p = String(d).slice(0, 10).split("-").map(Number);
+  if (p.length < 3 || !p[0]) return String(d);
+  return new Date(p[0], p[1] - 1, p[2]).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
 async function api(path, opts = {}) {
   const res = await fetch(path, opts);
   const ct = res.headers.get("content-type") || "";
@@ -48,420 +27,273 @@ async function api(path, opts = {}) {
   if (!res.ok) throw new Error((body && body.error) || res.statusText);
   return body;
 }
-
 let toastTimer;
-function toast(msg, isErr = false) {
-  const t = $("#toast");
-  t.textContent = msg;
-  t.className = "toast show" + (isErr ? " err" : "");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.className = "toast"), 3200);
+function toast(msg, err = false) {
+  const t = $("#toast"); t.textContent = msg; t.className = "toast show" + (err ? " err" : "");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = "toast"), 3400);
 }
-
-function statusBadge(status) {
-  const label = { active: "Active", expiring: "Expiring Soon", expired: "Expired", unknown: "Unknown" }[status] || status;
-  return `<span class="badge dot ${status}">${label}</span>`;
-}
-
-// ---- Navigation ------------------------------------------------------------
-const VIEW_META = {
-  dashboard: ["Dashboard", "Overview of contracts, insurance, and purchase orders"],
-  upload: ["Upload & Extract", "Add a document and let AI fill in the details"],
-  alerts: ["Alerts", "Insurance and contracts expiring within 30 days"],
-  documents: ["Document Hub", "Search current and archived documents"],
-};
-
-function showView(name) {
-  $$(".view").forEach((v) => v.classList.remove("active"));
-  $("#view-" + name).classList.add("active");
-  $$("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
-  const [title, sub] = VIEW_META[name];
-  $("#viewTitle").textContent = title;
-  $("#viewSub").textContent = sub;
-  closeNav(); // collapse the mobile menu after choosing a view
-
-  // Opening the Alerts tab sends any pending alert emails once per session.
-  if (name === "alerts" && !state.alertsNotified) {
-    state.alertsNotified = true;
-    sendAlertEmails(true);
-  }
-}
-
-$("#nav").addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-view]");
-  if (btn) showView(btn.dataset.view);
-});
-$("#quickUpload").addEventListener("click", () => showView("upload"));
-
-// --- Mobile hamburger navigation ---
-function openNav() {
-  document.body.classList.add("nav-open");
-  $("#hamburger").setAttribute("aria-expanded", "true");
-}
-function closeNav() {
-  document.body.classList.remove("nav-open");
-  $("#hamburger").setAttribute("aria-expanded", "false");
-}
-$("#hamburger").addEventListener("click", () =>
-  document.body.classList.contains("nav-open") ? closeNav() : openNav()
-);
-$("#navBackdrop").addEventListener("click", closeNav);
-document.addEventListener("keydown", (e) => e.key === "Escape" && closeNav());
-
-// ---- Data loading ----------------------------------------------------------
-async function loadAll() {
-  try {
-    const [contracts, documents, stats, alerts] = await Promise.all([
-      api("/api/contracts"),
-      api("/api/documents"),
-      api("/api/stats"),
-      api("/api/alerts"),
-    ]);
-    state.contracts = contracts;
-    state.documents = documents;
-    state.stats = stats;
-    state.alerts = alerts;
-    renderDashboard();
-    renderAlerts();
-    renderDocuments();
-  } catch (e) {
-    toast("Failed to load data: " + e.message, true);
-    $("#pairRows").innerHTML = `<tr><td colspan="7" class="empty">Could not reach the backend.<br><span class="muted">${esc(e.message)}</span></td></tr>`;
-  }
-}
-
-// ---- Dashboard -------------------------------------------------------------
-function renderDashboard() {
-  const s = state.stats || {};
-  $("#kpis").innerHTML = `
-    ${kpi("Total Contracts", s.total_contracts ?? 0, "")}
-    ${kpi("Active", s.active ?? 0, "green")}
-    ${kpi("Expiring Soon", s.expiring ?? 0, "amber")}
-    ${kpi("Total Value", money(s.total_value), "")}`;
-
-  $("#catBars").innerHTML = bars(s.by_category || {});
-  $("#collegeBars").innerHTML = bars(s.by_college || {});
-
-  const rows = state.contracts;
-  $("#pairCount").textContent = `${rows.length} pairing${rows.length === 1 ? "" : "s"}`;
-  $("#pairRows").innerHTML =
-    rows.length === 0
-      ? `<tr><td colspan="7" class="empty">No contracts yet. Upload one to get started.</td></tr>`
-      : rows
-          .map(
-            (c) => `<tr data-id="${esc(c.id)}">
-        <td><b>${esc(c.poly || "-")}</b></td>
-        <td>${esc(c.vendor || "-")}</td>
-        <td>${esc(c.college || "-")}</td>
-        <td class="mono">${esc(c.po || "-")}</td>
-        <td class="mono">${money(c.value)}</td>
-        <td class="mono">${fmtDate(c.end)}</td>
-        <td>${statusBadge(c.status)}</td>
-      </tr>`
-          )
-          .join("");
-  $$("#pairRows tr[data-id]").forEach((tr) =>
-    tr.addEventListener("click", () => openContract(tr.dataset.id))
-  );
-
-  const n = state.alerts.length;
-  $("#alertCount").textContent = n ? `(${n})` : "";
-}
-
-const kpi = (label, num, cls) =>
-  `<div class="card kpi"><div class="label">${label}</div><div class="num ${cls}">${num}</div></div>`;
-
-function bars(obj) {
-  const entries = Object.entries(obj).sort((a, b) => b[1] - a[1]);
-  if (!entries.length) return `<div class="muted">No data</div>`;
-  const max = Math.max(...entries.map((e) => e[1]));
-  return entries
-    .map(
-      ([name, val]) => `<div class="bar-row">
-      <div class="name">${esc(name)}</div>
-      <div class="bar-track"><div class="bar-fill" style="width:${(val / max) * 100}%"></div></div>
-      <div class="val">${val}</div></div>`
-    )
-    .join("");
-}
-
-// ---- Contract detail drawer ------------------------------------------------
-let drawerEditing = false;
-
-async function openContract(id) {
-  let contract;
-  try {
-    contract = await api("/api/contracts/" + id);
-  } catch (e) {
-    return toast(e.message, true);
-  }
-  drawerEditing = false;
-  renderDrawer(contract);
-  $("#backdrop").classList.add("open");
-  $("#drawer").classList.add("open");
-}
-
-function closeDrawer() {
-  $("#backdrop").classList.remove("open");
-  $("#drawer").classList.remove("open");
-}
-$("#drawerClose").addEventListener("click", closeDrawer);
-$("#backdrop").addEventListener("click", closeDrawer);
-
-function renderDrawer(c) {
-  $("#drawerTitle").textContent = c.vendor || "Contract";
-  $("#drawerSub").innerHTML = `${esc(c.poly || "")} &nbsp; ${statusBadge(c.status)}`;
-
-  if (drawerEditing) {
-    $("#drawerBody").innerHTML = `<div class="form-grid">${FIELDS.map((f) =>
-      fieldInput(f, c[f.key])
-    ).join("")}</div>`;
-    $("#drawerFoot").innerHTML = `
-      <button class="btn ghost" id="cancelEdit">Cancel</button>
-      <button class="btn" id="saveEdit">Save Changes</button>`;
-    $("#cancelEdit").addEventListener("click", () => { drawerEditing = false; renderDrawer(c); });
-    $("#saveEdit").addEventListener("click", () => saveEdit(c.id));
-    return;
-  }
-
-  const docs = c.document_records || [];
-  $("#drawerBody").innerHTML = `
-    <div class="kv">
-      ${row("Category", `${esc(c.cat || "-")}${c.sub ? " / " + esc(c.sub) : ""}`)}
-      ${row("Campus", esc(c.college || "-"))}
-      ${row("Value", money(c.value))}
-      ${row("Term", `${fmtDate(c.start)} &rarr; ${fmtDate(c.end)}`)}
-      ${row("PO Number", `${esc(c.po || "-")}`)}
-      ${row("PO End", fmtDate(c.poEnd))}
-      ${row("Insurance Expiry", `${fmtDate(c.ins)} ${dayHint(c.days_to_insurance)}`)}
-      ${row("Additional Insured", esc(c.addl || "-"))}
-    </div>
-    <div style="margin-top:16px">
-      <div class="muted" style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px">Scope</div>
-      <p style="margin:6px 0 0">${esc(c.scope || "-")}</p>
-    </div>
-    <div style="margin-top:14px">
-      <div class="muted" style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px">AI Summary</div>
-      <p style="margin:6px 0 0">${esc(c.summary || "-")}</p>
-    </div>
-    <div style="margin-top:16px">
-      <div class="muted" style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px">Documents</div>
-      <div style="margin-top:6px">
-        ${docs.length ? docs.map((d) => `<span class="doc-chip" data-doc="${esc(d.id)}">📄 ${esc(d.filename)}</span>`).join("") : '<span class="muted">None linked</span>'}
-      </div>
-    </div>`;
-  $("#drawerFoot").innerHTML = `
-    ${docs.length ? `<button class="btn ghost view-docs-btn" id="viewDocsBtn">View ${docs.length} document${docs.length > 1 ? "s" : ""}</button>` : ""}
-    <button class="btn" id="editBtn">Edit</button>`;
-  $("#editBtn").addEventListener("click", () => { drawerEditing = true; renderDrawer(c); });
-  if (docs.length) {
-    $("#viewDocsBtn").addEventListener("click", () => openViewer(docs, 0));
-  }
-  $$("#drawerBody .doc-chip").forEach((chip) =>
-    chip.addEventListener("click", () => openDoc(chip.dataset.doc))
-  );
-}
-
-const row = (k, v) => `<div class="k">${k}</div><div>${v}</div>`;
-const dayHint = (d) =>
-  d == null ? "" : d < 0 ? `<span class="badge expired">expired</span>` : d <= 30 ? `<span class="badge expiring">${d}d</span>` : "";
-
-async function saveEdit(id) {
-  const payload = collectForm("#drawerBody");
-  try {
-    const updated = await api("/api/contracts/" + id, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    toast("Contract updated");
-    drawerEditing = false;
-    await loadAll();
-    // reopen fresh
-    const fresh = await api("/api/contracts/" + id);
-    renderDrawer(fresh);
-  } catch (e) {
-    toast(e.message, true);
-  }
-}
-
-// ---- Form building ---------------------------------------------------------
-function fieldInput(f, value) {
-  const v = value == null ? "" : value;
-  let input;
-  if (f.type === "select") {
-    input = `<select data-key="${f.key}">${f.options
-      .map((o) => `<option value="${esc(o)}" ${o === v ? "selected" : ""}>${o || "-"}</option>`)
-      .join("")}</select>`;
-  } else if (f.type === "textarea") {
-    input = `<textarea data-key="${f.key}">${esc(v)}</textarea>`;
-  } else {
-    input = `<input type="${f.type}" data-key="${f.key}" value="${esc(v)}" />`;
-  }
-  return `<label class="field" ${f.full ? 'style="grid-column:1/-1"' : ""}><span>${f.label}</span>${input}</label>`;
-}
-
-function collectForm(rootSel) {
-  const out = {};
-  $$(`${rootSel} [data-key]`).forEach((el) => {
-    let val = el.value;
-    if (el.type === "number") val = val === "" ? null : Number(val);
-    else if (val === "") val = null;
-    out[el.dataset.key] = val;
-  });
-  return out;
-}
-
-// ---- Upload & Extract ------------------------------------------------------
-const drop = $("#drop");
-const fileInput = $("#fileInput");
-drop.addEventListener("click", () => fileInput.click());
-["dragover", "dragenter"].forEach((ev) =>
-  drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("drag"); })
-);
-["dragleave", "drop"].forEach((ev) =>
-  drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("drag"); })
-);
-drop.addEventListener("drop", (e) => { if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]); });
-fileInput.addEventListener("change", () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); });
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function uploadFile(file) {
-  $("#uploadStatus").innerHTML = `<span class="spinner"></span> Uploading <b>${esc(file.name)}</b>...`;
-  $("#extractCard").classList.add("hidden");
-  const fd = new FormData();
-  fd.append("file", file);
+/* ===== Derived status ===== */
+const dept = (c) => c.cat || "Uncategorized";
+const contractStatus = (c) => ({ active: "Active", expiring: "Expiring", expired: "Expired" }[c.status] || "Unknown");
+function insStatus(c) { const d = c.days_to_insurance; if (d == null) return "Unknown"; return d < 0 ? "Lapsed" : d <= 30 ? "Expiring" : "Current"; }
+function poStatus(c) { const d = c.days_to_po_end; if (d == null) return "Open"; return d < 0 ? "Closed" : d <= 45 ? "Closing" : "Open"; }
+const TAG = { Active: "t-green", Expiring: "t-amber", Expired: "t-red", Unknown: "t-slate", Current: "t-green", Lapsed: "t-red", Open: "t-green", Closing: "t-amber", Closed: "t-slate" };
+const docVendor = (cid) => { const c = state.contracts.find((x) => x.id === cid); return c ? c.vendor : ""; };
+
+/* ===== Navigation ===== */
+function showView(v, btn) {
+  closeDetail();
+  $$(".view").forEach((e) => e.classList.remove("on"));
+  $("#v-" + v).classList.add("on");
+  $$(".sidebar nav button").forEach((b) => b.classList.remove("on"));
+  if (btn) btn.classList.add("on");
+  else { const nb = $(`.sidebar nav button[onclick*="'${v}'"]`); if (nb) nb.classList.add("on"); }
+  if (v === "alerts" && !state.alertsNotified) { state.alertsNotified = true; sendAlertEmails(true); }
+}
+
+/* ===== Data load ===== */
+async function loadAll() {
   try {
-    const res = await api("/api/upload", { method: "POST", body: fd });
-    state.pendingDoc = res;
-    renderExtractForm(res.fields || {});
-    embedPreview(res.document);
-    await loadAll(); // refresh doc hub
-
-    if (res.async) {
-      // Parsing runs in AWS Lambda (triggered by the S3 upload). Poll for it.
-      $("#uploadStatus").innerHTML = `☁️ Stored <b>${esc(file.name)}</b> in S3. <span class="spinner"></span> AI parsing in Lambda...`;
-      const fields = await pollParse(res.document.id, file.name);
-      state.pendingDoc.fields = fields;
-      renderExtractForm(fields || {});
-      embedPreview(res.document);
-    } else {
-      $("#uploadStatus").innerHTML = `✅ Stored <b>${esc(file.name)}</b>. Review the extracted fields beside the document.`;
-    }
+    const [contracts, documents, alerts] = await Promise.all([
+      api("/api/contracts"), api("/api/documents"), api("/api/alerts"),
+    ]);
+    state.contracts = contracts; state.documents = documents; state.alerts = alerts;
+    buildDeptFilter(); buildHero(); buildCards(); buildHead(); render();
+    buildInsurance(); buildAlerts(); buildRail(); buildDocHub();
   } catch (e) {
-    $("#uploadStatus").innerHTML = `<span class="badge expired">Upload failed</span> <span class="muted">${esc(e.message)}</span>`;
-    toast(e.message, true);
+    $("#rows").innerHTML = `<tr><td colspan="7" class="empty">Could not reach the backend.<br><span class="mini">${esc(e.message)}</span></td></tr>`;
+    toast("Failed to load: " + e.message, true);
   }
 }
 
-// Poll a document's parse status until the Lambda finishes (or times out).
-async function pollParse(docId, fname, tries = 40) {
-  for (let i = 0; i < tries; i++) {
-    await sleep(2000);
-    let doc;
-    try {
-      doc = await api(`/api/documents/${docId}`);
-    } catch (e) {
-      continue;
-    }
-    if (doc.parse_status === "done") {
-      $("#uploadStatus").innerHTML = `✅ Parsed <b>${esc(fname)}</b> with AI (Lambda). Review the fields.`;
-      return doc.parsed_fields || {};
-    }
-    if (doc.parse_status === "error") {
-      $("#uploadStatus").innerHTML = `<span class="badge expired">AI parse failed</span> <span class="muted">${esc(doc.parse_error || "")}</span> - fill the fields manually.`;
-      return { _meta: { ok: false, error: doc.parse_error } };
-    }
-  }
-  $("#uploadStatus").innerHTML = `<span class="badge expiring">Parsing is taking longer than expected</span> - fill fields manually or wait and refresh.`;
-  return { _meta: { ok: false, error: "timeout" } };
+/* ===== Hero + cards ===== */
+function buildHero() {
+  const ex = state.contracts.filter((c) => contractStatus(c) === "Expiring").length;
+  const ins = state.contracts.filter((c) => ["Expiring", "Lapsed"].includes(insStatus(c))).length;
+  $("#heroHeadline").innerHTML = `You have ${ex} ${ex === 1 ? "contract" : "contracts"} and ${ins} ${ins === 1 ? "insurance item" : "insurance items"} needing attention within 30 days.`;
+}
+function buildCards() {
+  const C = state.contracts;
+  const cards = [
+    { n: C.length, l: "Total contracts", dot: "d-crim", f: () => resetF() },
+    { n: C.filter((c) => contractStatus(c) === "Active").length, l: "Active", dot: "d-green", f: () => setStatus("Active") },
+    { n: C.filter((c) => contractStatus(c) === "Expiring").length, l: "Expiring ≤30 days", dot: "d-amber", f: () => setStatus("Expiring") },
+    { n: C.filter((c) => contractStatus(c) === "Expired").length, l: "Expired", dot: "d-red", f: () => setStatus("Expired") },
+    { n: C.filter((c) => ["Expiring", "Lapsed"].includes(insStatus(c))).length, l: "Insurance issues", dot: "d-red", f: () => setIns() },
+  ];
+  $("#cards").innerHTML = cards.map((c, i) =>
+    `<div class="card" onclick="_cardf(${i})"><span class="dot ${c.dot}"></span><div class="n">${c.n}</div><div class="l">${c.l}</div></div>`).join("");
+  window.__cardf = cards.map((c) => c.f);
+}
+window._cardf = (i) => window.__cardf[i]();
+function setStatus(s) { resetF(); $("#fStatus").value = s; render(); }
+function setIns() { resetF(); $("#fIns").value = "__any"; render(); }
+function resetF() { $("#search").value = ""; $("#fDept").value = ""; $("#fStatus").value = ""; $("#fIns").value = ""; render(); }
+
+/* ===== Contracts table ===== */
+const COLS = [{ k: "vendor", t: "Vendor / Scope" }, { k: "dept", t: "Category" }, { k: "end", t: "Contract ends" },
+{ k: "status", t: "Status" }, { k: "ins", t: "Insurance (COI)" }, { k: "poEnd", t: "PO" }, { k: "value", t: "Value" }];
+function buildHead() {
+  $("#head").innerHTML = COLS.map((c) => {
+    const s = c.k === state.sortK ? "sorted" : "";
+    const ar = c.k === state.sortK ? (state.sortDir > 0 ? "▲" : "▼") : "▲";
+    return `<th class="${s}" onclick="sortBy('${c.k}')">${c.t} <span class="arr">${ar}</span></th>`;
+  }).join("");
+}
+function sortBy(k) { if (state.sortK === k) state.sortDir *= -1; else { state.sortK = k; state.sortDir = 1; } buildHead(); render(); }
+function sortVal(c, k) {
+  if (k === "vendor") return (c.vendor || "").toLowerCase();
+  if (k === "dept") return dept(c).toLowerCase();
+  if (k === "status") return { Expired: 0, Expiring: 1, Active: 2, Unknown: 3 }[contractStatus(c)];
+  if (k === "ins") return c.ins || "9999";
+  if (k === "value") return c.value || 0;
+  if (k === "end" || k === "poEnd") return c[k] || "9999";
+  return c[k];
+}
+function render() {
+  const q = $("#search").value.toLowerCase();
+  const fd = $("#fDept").value, fs = $("#fStatus").value, fi = $("#fIns").value;
+  let rows = state.contracts.filter((c) => {
+    if (fd && dept(c) !== fd) return false;
+    if (fs && contractStatus(c) !== fs) return false;
+    if (fi === "__any" && !["Expiring", "Lapsed"].includes(insStatus(c))) return false;
+    if (fi && fi !== "__any" && insStatus(c) !== fi) return false;
+    if (q && !((c.vendor || "") + " " + (c.scope || "") + " " + (c.po || "") + " " + (c.poly || "")).toLowerCase().includes(q)) return false;
+    return true;
+  });
+  rows.sort((a, b) => { const x = sortVal(a, state.sortK), y = sortVal(b, state.sortK); return (x > y ? 1 : x < y ? -1 : 0) * state.sortDir; });
+  const dtxt = (d) => d == null ? "" : d < 0 ? `${-d}d ago` : `in ${d}d`;
+  $("#rows").innerHTML = rows.map((c) => {
+    const st = contractStatus(c), is = insStatus(c), ps = poStatus(c);
+    return `<tr class="row" onclick="openDetail('${esc(c.id)}')">
+      <td><div class="vendor">${esc(c.vendor || "—")}</div><div class="scope">${esc(c.scope || "")}</div></td>
+      <td>${esc(dept(c))}</td>
+      <td>${fmt(c.end)}<div class="days">${dtxt(c.days_to_end)}</div></td>
+      <td><span class="tag ${TAG[st]}">${st === "Expiring" ? "Expiring soon" : st}</span></td>
+      <td><span class="tag ${TAG[is]}">${is}</span><div class="days">exp ${fmt(c.ins)}</div></td>
+      <td><span class="tag ${TAG[ps]}">${ps}</span><div class="days">${esc(c.po || "—")}</div></td>
+      <td>${usd(c.value)}</td></tr>`;
+  }).join("") || `<tr><td colspan="7" class="empty">No contracts match these filters.</td></tr>`;
+  $("#count").textContent = `${rows.length} of ${state.contracts.length} contracts`;
+}
+function buildDeptFilter() {
+  const sel = $("#fDept"), cur = sel.value;
+  const cats = [...new Set(state.contracts.map(dept))].sort();
+  sel.innerHTML = `<option value="">All categories</option>` + cats.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`).join("");
+  sel.value = cur;
 }
 
-function renderExtractForm(fields) {
-  const meta = fields._meta || {};
-  $("#extractMethod").textContent = meta.ok === false
-    ? "(AI parse unavailable - fill in manually)"
-    : meta.method ? `(via ${meta.method.replace("_", " ")})` : "";
-  $("#extractForm").innerHTML = FIELDS.map((f) => fieldInput(f, fields[f.key])).join("");
-  $("#extractCard").classList.remove("hidden");
-  $("#extractCard").scrollIntoView({ behavior: "smooth" });
-}
+/* ===== Contract detail overlay (real fields only) ===== */
+async function openDetail(id) {
+  let c;
+  try { c = await api("/api/contracts/" + id); } catch (e) { return toast(e.message, true); }
+  const st = contractStatus(c), is = insStatus(c), ps = poStatus(c);
+  const docs = c.document_records || [];
+  const agreement = docs.find((d) => d.type !== "coi");
+  const coi = docs.find((d) => d.type === "coi");
+  const pill = (cls, txt) => `<span class="pill ${cls}">${esc(txt)}</span>`;
+  const cCls = st === "Active" ? "ok" : st === "Expiring" ? "warn" : "bad";
+  const iCls = is === "Current" ? "ok" : is === "Expiring" ? "warn" : is === "Unknown" ? "warn" : "bad";
+  const pCls = ps === "Open" ? "ok" : ps === "Closing" ? "warn" : "bad";
 
-$("#discardBtn").addEventListener("click", () => {
-  state.pendingDoc = null;
-  $("#extractCard").classList.add("hidden");
-  $("#uploadStatus").innerHTML = "";
-  $("#extractPreview").innerHTML = '<div class="placeholder">Document preview</div>';
-});
+  const rec = [];
+  if (st === "Expired") rec.push("Cancel or issue a new agreement — contract is expired.");
+  else if (st === "Expiring") rec.push(`Renew or extend the agreement before ${fmt(c.end)}.`);
+  if (is === "Lapsed") rec.push("Request a current Certificate of Insurance from the vendor.");
+  else if (is === "Expiring") rec.push(`Request an updated COI before ${fmt(c.ins)} to avoid a lapse.`);
+  if (String(c.addl).toLowerCase() !== "yes") rec.push("Obtain an additional-insured endorsement naming the District.");
+  if (ps === "Closed") rec.push("Confirm a new purchase order for the current fiscal year.");
+  else if (ps === "Closing") rec.push(`Renew the purchase order before ${fmt(c.poEnd)}.`);
+  if (!rec.length) rec.push("No action needed — contract, insurance, and PO are all current.");
 
-$("#saveContractBtn").addEventListener("click", async () => {
-  const payload = collectForm("#extractForm");
-  if (!payload.vendor) return toast("Vendor is required", true);
-  if (state.pendingDoc && state.pendingDoc.document) {
-    payload.document_id = state.pendingDoc.document.id;
-  }
-  try {
-    await api("/api/contracts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    toast("Contract saved");
-    state.pendingDoc = null;
-    $("#extractCard").classList.add("hidden");
-    $("#uploadStatus").innerHTML = "";
-    await loadAll();
-    showView("dashboard");
-  } catch (e) {
-    toast(e.message, true);
-  }
-});
+  const docBtn = (d, label) => d
+    ? `<a class="btn ghost" href="/api/documents/${esc(d.id)}/view" target="_blank" rel="noopener">${label}</a>`
+    : `<button class="btn ghost" disabled title="No document on file">${label}</button>`;
 
-// ---- Alerts ----------------------------------------------------------------
-function renderAlerts() {
-  const list = state.alerts;
-  const el = $("#alertList");
-  if (!list.length) {
-    el.innerHTML = `<div class="card empty">🎉 Nothing expiring in the next 30 days.</div>`;
-    return;
-  }
-  const kindLabel = { insurance: "Insurance / COI", contract: "Contract end", po: "Purchase order" };
-  el.innerHTML = list
-    .map((a) => {
-      const cls = a.days <= 7 ? "crit" : "warn";
-      let mail;
-      if (!a.has_email) {
-        mail = `<span class="muted">No email on file for ${esc(a.contract_head || "contract head")} — alert only</span>`;
-      } else if (a.message_status === "sent") {
-        mail = `<span class="badge active">✉ Emailed ${esc(a.contract_head || "")}</span> <span class="muted">click to view the message</span>`;
-      } else if (a.message_status === "demo") {
-        mail = `<span class="badge expiring">✉ Email prepared (demo)</span> <span class="muted">click to view</span>`;
-      } else if (a.message_status === "failed") {
-        mail = `<span class="badge expired">Email failed</span> <span class="muted">click to view details</span>`;
-      } else {
-        mail = `<span class="muted">Email pending for ${esc(a.contract_head || "")} — use "Send alert emails"</span>`;
-      }
-      return `<div class="alert-item ${cls}" data-id="${esc(a.contract_id)}" data-msg="${esc(a.message_id || "")}">
-        <div class="days">${a.days}<small>DAYS</small></div>
-        <div class="meta">
-          <b>${esc(a.vendor || "Unknown vendor")}</b> &nbsp;<span class="muted">${esc(a.poly || "")}</span>
-          <div class="sub">${kindLabel[a.kind]} expires ${esc(a.date)} · ${esc(a.college || "")}</div>
-          <div class="sub">${mail}</div>
+  const owner = c.contract_head || "—";
+  const ownerEmail = c.contract_head_email || "";
+
+  $("#detailInner").innerHTML = `
+    <button class="back" onclick="closeDetail()">← Back to contracts</button>
+    <div class="dgrid">
+      <div class="dmain">
+        <div class="dcard dtl-head">
+          <div class="dh-txt">
+            <div class="dtl-eyebrow">🏢 Foothill–De Anza CCD · ${esc(dept(c))}</div>
+            <h1>${esc(c.vendor || "Contract")}</h1>
+            <div class="dsub">${esc(c.scope || "")}</div>
+            <div class="pills">
+              ${pill(cCls, st === "Expiring" ? "Expiring soon" : st)}
+              ${pill(iCls, is === "Current" ? "COI current" : is === "Lapsed" ? "COI lapsed" : is === "Expiring" ? "COI expiring" : "COI unknown")}
+              ${c.po ? pill(pCls, c.po) : ""}
+              ${String(c.addl).toLowerCase() === "yes" ? "" : pill("warn", "No add’l insured")}
+            </div>
+          </div>
+          <div class="dtl-actions">
+            ${docBtn(agreement, "📄 View contract")}
+            ${docBtn(coi, "🛡 View COI")}
+            <button class="btn" onclick="closeDetail();document.getElementById('navNotifBtn').click()">Review alerts</button>
+          </div>
         </div>
-        <span class="badge ${a.kind === "insurance" ? "expiring" : "expired"}">${a.kind}</span>
-      </div>`;
-    })
-    .join("");
-  $$("#alertList .alert-item").forEach((it) =>
-    it.addEventListener("click", () => {
-      const msg = it.dataset.msg;
-      if (msg) openMessage(msg);
-      else openContract(it.dataset.id);
-    })
-  );
+
+        <div class="dcard">
+          <div class="kv-label">✨ AI scope summary</div>
+          <div class="sum-text">${esc(c.summary || "No summary extracted.")}</div>
+        </div>
+
+        <div class="dcard">
+          <h3 class="dsec-title">Key facts</h3>
+          <div class="facts">
+            <div class="fact"><div class="fk">💲 Value</div><div class="fv">${usd(c.value)}</div></div>
+            <div class="fact"><div class="fk">📅 Term</div><div class="fv">${fmt(c.start)} → ${fmt(c.end)}</div></div>
+            <div class="fact"><div class="fk"># PO number</div><div class="fv">${esc(c.po || "—")}</div></div>
+            <div class="fact"><div class="fk">📅 PO ends</div><div class="fv">${fmt(c.poEnd)}</div></div>
+            <div class="fact"><div class="fk">🏫 Campus</div><div class="fv">${esc(c.college || "—")}</div></div>
+            <div class="fact"><div class="fk">👤 Contract head</div><div class="fv">${esc(owner)}${ownerEmail ? `<small>${esc(ownerEmail)}</small>` : ""}</div></div>
+            <div class="fact"><div class="fk">🛡 Insurance expiry</div><div class="fv">${fmt(c.ins)}</div></div>
+            <div class="fact"><div class="fk">➕ Additional insured</div><div class="fv">${esc(c.addl || "—")}</div></div>
+          </div>
+        </div>
+
+        <div class="dcard">
+          <h3 class="dsec-title">Lifecycle tracking</h3>
+          <div class="track">
+            <div class="track-row"><div><div class="tt">Contract term</div><div class="ts">Ends ${fmt(c.end)}</div></div>${pill(cCls, st === "Expiring" ? "Expiring soon" : st)}</div>
+            <div class="track-row"><div><div class="tt">Insurance / COI</div><div class="ts">${is === "Lapsed" ? "Certificate expired " + fmt(c.ins) : "Valid through " + fmt(c.ins)}</div></div>${pill(iCls, is)}</div>
+            <div class="track-row"><div><div class="tt">PO / fiscal year</div><div class="ts">Ends ${fmt(c.poEnd)}</div></div>${c.po ? pill(pCls, c.po) : pill("warn", "No PO")}</div>
+          </div>
+        </div>
+
+        <div class="dcard">
+          <h3 class="dsec-title">Documents (${docs.length})</h3>
+          ${docs.length ? docs.map((d) => `<div class="track-row" style="border-top:1px solid var(--line)">
+            <div><div class="tt">${d.type === "coi" ? "🛡 Certificate of Insurance" : "📄 " + (d.type || "Document")}</div><div class="ts">${esc(d.filename || "")}</div></div>
+            <a class="btn ghost" href="/api/documents/${esc(d.id)}/view" target="_blank" rel="noopener">Open</a></div>`).join("")
+      : `<div class="mini">No documents linked to this contract.</div>`}
+        </div>
+      </div>
+
+      <div class="drail">
+        <div class="dcard"><div class="rec-title">⚠ Recommended actions</div><ul class="rec-list">${rec.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>
+        <div class="dcard"><div class="rail-title">Contract head</div><div class="owner-name">👤 ${esc(owner)}</div>${ownerEmail ? `<a class="owner-mail" href="mailto:${esc(ownerEmail)}">✉ ${esc(ownerEmail)}</a>` : `<div class="mini" style="margin-top:8px">No email on file — no alert email is sent.</div>`}</div>
+        <div class="dcard"><div class="rail-title">Financials</div><div class="fin-row"><span class="fl">Value</span><span class="fr">${usd(c.value)}</span></div><div class="fin-row"><span class="fl">Campus</span><span class="fr">${esc(c.college || "—")}</span></div></div>
+      </div>
+    </div>`;
+  $("#detail").classList.add("show");
+  $("#detail").scrollTop = 0;
+}
+function closeDetail() { $("#detail").classList.remove("show"); }
+
+/* ===== Insurance rollup (by category) ===== */
+function buildInsurance() {
+  const cats = [...new Set(state.contracts.map(dept))].sort();
+  $("#insRows").innerHTML = cats.map((d) => {
+    const cs = state.contracts.filter((c) => dept(c) === d);
+    const cur = cs.filter((c) => insStatus(c) === "Current").length;
+    const exp = cs.filter((c) => insStatus(c) === "Expiring").length;
+    const lap = cs.filter((c) => insStatus(c) === "Lapsed").length;
+    const miss = cs.filter((c) => String(c.addl).toLowerCase() !== "yes").length;
+    const t = cs.length, pc = (n) => t ? Math.round(n / t * 100) : 0;
+    return `<tr>
+      <td style="font-weight:650">${esc(d)}</td><td>${t}</td>
+      <td><div class="bar"><i style="width:${pc(cur)}%;background:var(--green)"></i><i style="width:${pc(exp)}%;background:var(--amber)"></i><i style="width:${pc(lap)}%;background:var(--red)"></i></div></td>
+      <td>${cur ? `<span class="tag t-green">${cur}</span>` : "—"}</td>
+      <td>${exp ? `<span class="tag t-amber">${exp}</span>` : "—"}</td>
+      <td>${lap ? `<span class="tag t-red">${lap}</span>` : "—"}</td>
+      <td>${miss ? `<span class="tag t-red">${miss}</span>` : '<span class="mini">0</span>'}</td></tr>`;
+  }).join("") || `<tr><td colspan="7" class="empty">No contracts yet.</td></tr>`;
 }
 
+/* ===== Notifications (real /api/alerts) ===== */
+function buildAlerts() {
+  // group per contract (soonest first)
+  const byC = {};
+  state.alerts.forEach((a) => {
+    const g = byC[a.contract_id] || (byC[a.contract_id] = { ...a, kinds: [] });
+    g.kinds.push(a.kind); if (a.days < g.days) g.days = a.days;
+  });
+  const groups = Object.values(byC).sort((a, b) => a.days - b.days);
+  $("#navBadge").textContent = groups.length;
+  const kindLabel = { insurance: "insurance / COI", contract: "contract", po: "purchase order" };
+  $("#emails").innerHTML = groups.map((g) => {
+    let statusBadge, click = "";
+    if (!g.has_email) statusBadge = `<span class="tag t-slate">No email on file</span>`;
+    else if (g.message_status === "sent") { statusBadge = `<span class="tag t-green">✉ Emailed</span>`; click = `onclick="openMessage('${esc(g.message_id)}')"`; }
+    else if (g.message_status === "failed") { statusBadge = `<span class="tag t-red">Send failed</span>`; click = `onclick="openMessage('${esc(g.message_id)}')"`; }
+    else statusBadge = `<span class="tag t-amber">Pending — click “Send alert emails”</span>`;
+    const kinds = [...new Set(g.kinds)].map((k) => kindLabel[k]).join(", ");
+    return `<div class="email ${click ? "clickable" : ""}" ${click}>
+      <div class="eh">
+        <div><div class="subj">${esc(g.vendor || "Vendor")} — expires in ${g.days} day${g.days === 1 ? "" : "s"}</div>
+        <div class="meta">To: ${esc(g.contract_head || "contract head")}${g.contract_head_email ? " &lt;" + esc(g.contract_head_email) + "&gt;" : ""} · ${esc(g.college || "")}</div></div>
+        ${statusBadge}
+      </div>
+      <div class="eb">This contract (${esc(kinds)}) is within 30 days of expiry. ${g.has_email ? "The contract head is notified at 30 days and again at 2 weeks." : "No contract-head email is on file, so no email is sent — this is an on-screen alert only."} ${click ? "<span class='mini'>Click to view the message sent.</span>" : ""}</div>
+    </div>`;
+  }).join("") || `<div style="color:var(--muted);padding:20px">No contracts expiring within 30 days.</div>`;
+}
 async function sendAlertEmails(silent) {
   try {
     const res = await api("/api/alerts/notify", { method: "POST" });
@@ -469,201 +301,183 @@ async function sendAlertEmails(silent) {
     if (!silent) {
       const parts = [];
       if (s.sent) parts.push(`${s.sent} sent`);
-      if (s.demo) parts.push(`${s.demo} prepared (demo)`);
       if (s.already_sent) parts.push(`${s.already_sent} already sent`);
       if (s.skipped_no_email) parts.push(`${s.skipped_no_email} no-email`);
       if (s.failed) parts.push(`${s.failed} failed`);
       toast("Alert emails: " + (parts.join(", ") || "nothing to send"));
     }
     await loadAll();
-  } catch (e) {
-    if (!silent) toast(e.message, true);
-  }
+  } catch (e) { if (!silent) toast(e.message, true); }
 }
-
 async function openMessage(mid) {
+  if (!mid) return;
   try {
-    const m = await api(`/api/messages/${mid}`);
+    const m = await api("/api/messages/" + mid);
     $("#msgSubject").textContent = m.subject || "Alert message";
-    const status =
-      m.send_status === "sent"
-        ? `sent to ${m.to_actual}`
-        : m.send_status === "demo"
-        ? "prepared (demo — not actually sent)"
-        : m.send_status === "failed"
-        ? `failed: ${m.error || ""}`
-        : m.send_status || "";
-    $("#msgMeta").textContent = `To: ${m.to_email || "-"}  ·  ${status}  ·  ${(m.sent_at || "").slice(0, 19).replace("T", " ")}`;
+    const status = m.send_status === "sent" ? `sent to ${m.to_actual}` : m.send_status === "failed" ? `failed: ${m.error || ""}` : m.send_status || "";
+    $("#msgMeta").textContent = `To: ${m.to_email || "-"} · ${status} · ${(m.sent_at || "").slice(0, 19).replace("T", " ")}`;
     $("#msgBody").innerHTML = m.body_html || `<pre>${esc(m.body_text || "")}</pre>`;
-    $("#msgBackdrop").classList.add("open");
-    $("#msgModal").classList.add("open");
-  } catch (e) {
-    toast(e.message, true);
-  }
+    $("#msgModal").classList.add("show");
+  } catch (e) { toast(e.message, true); }
+}
+function closeMessage() { $("#msgModal").classList.remove("show"); }
+
+/* ===== Right rail ===== */
+function ring(pct, color, label) {
+  const r = 26, c = 2 * Math.PI * r, off = c * (1 - pct / 100);
+  return `<div class="ring-row"><svg class="ring" viewBox="0 0 64 64" role="img" aria-label="${label} ${pct}%">
+    <circle class="ring-bg" cx="32" cy="32" r="${r}"/>
+    <circle cx="32" cy="32" r="${r}" stroke="${color}" stroke-width="7" fill="none" stroke-linecap="round"
+      stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" transform="rotate(-90 32 32)"/>
+    <text class="ring-num" x="32" y="37" text-anchor="middle">${pct}%</text></svg>
+    <div class="ring-label">${label}</div></div>`;
+}
+function buildRail() {
+  const up = state.contracts.map((c) => ({ c, d: c.days_to_end })).filter((x) => x.d != null && x.d >= 0).sort((a, b) => a.d - b.d).slice(0, 5);
+  $("#railUpcoming").innerHTML = up.map(({ c, d }) => {
+    const st = contractStatus(c);
+    return `<div class="rail-row" onclick="openDetail('${esc(c.id)}')" tabindex="0" onkeydown="if(event.key==='Enter')openDetail('${esc(c.id)}')">
+      <span class="rail-dot ${st === "Expiring" ? "d-amber" : "d-green"}"></span>
+      <div class="rail-main"><div class="rail-v">${esc(c.vendor || "—")}</div><div class="rail-sub">${esc(dept(c))} · ${fmt(c.end)}</div></div>
+      <div class="rail-days">${d}d</div></div>`;
+  }).join("") || `<div class="mini" style="padding:8px 0">Nothing due soon.</div>`;
+  const t = state.contracts.length, pc = (n) => t ? Math.round(n / t * 100) : 0;
+  const active = pc(state.contracts.filter((c) => contractStatus(c) === "Active").length);
+  const coi = pc(state.contracts.filter((c) => insStatus(c) === "Current").length);
+  const addl = pc(state.contracts.filter((c) => String(c.addl).toLowerCase() === "yes").length);
+  $("#railRings").innerHTML = ring(active, "var(--green)", "Contracts active") + ring(coi, "var(--amber)", "COI current") + ring(addl, "var(--crim)", "Add’l insured on file");
 }
 
-function closeMessage() {
-  $("#msgBackdrop").classList.remove("open");
-  $("#msgModal").classList.remove("open");
-}
-$("#msgClose").addEventListener("click", closeMessage);
-$("#msgBackdrop").addEventListener("click", closeMessage);
-$("#sendAlertsBtn").addEventListener("click", () => sendAlertEmails(false));
-
-// ---- Document Hub ----------------------------------------------------------
-$("#docSeg").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-scope]");
-  if (!b) return;
-  state.docScope = b.dataset.scope;
-  $$("#docSeg button").forEach((x) => x.classList.toggle("active", x === b));
-  renderDocuments();
-});
-$("#docSearch").addEventListener("input", (e) => {
-  state.docQuery = e.target.value.toLowerCase().trim();
-  renderDocuments();
-});
-
-function vendorForContract(cid) {
-  const c = state.contracts.find((x) => x.id === cid);
-  return c ? c.vendor : "";
-}
-
-function renderDocuments() {
+/* ===== Document Hub ===== */
+function buildDocHub() {
   let docs = state.documents.slice();
   if (state.docScope === "current") docs = docs.filter((d) => !d.archived);
   else if (state.docScope === "archived") docs = docs.filter((d) => d.archived);
-
   if (state.docQuery) {
-    docs = docs.filter((d) => {
-      const hay = [d.filename, d.type, vendorForContract(d.contract_id)]
-        .join(" ")
-        .toLowerCase();
-      return hay.includes(state.docQuery);
-    });
+    docs = docs.filter((d) => [d.filename, d.type, docVendor(d.contract_id)].join(" ").toLowerCase().includes(state.docQuery));
   }
-
-  $("#docRows").innerHTML = docs.length
-    ? docs
-        .map(
-          (d) => `<tr>
-        <td><b>📄 ${esc(d.filename)}</b></td>
-        <td><span class="doc-type">${esc(d.type || "doc")}</span></td>
-        <td>${esc(vendorForContract(d.contract_id) || "-")}</td>
-        <td class="mono">${esc((d.uploaded_at || "").slice(0, 10))}</td>
-        <td>${d.archived ? '<span class="badge expired">Archived</span>' : '<span class="badge active">Current</span>'}</td>
-        <td style="text-align:right">
-          <button class="btn ghost sm" data-open="${esc(d.id)}">Open</button>
-          <button class="btn ghost sm" data-arch="${esc(d.id)}">${d.archived ? "Restore" : "Archive"}</button>
-        </td>
-      </tr>`
-        )
-        .join("")
+  docs.sort((a, b) => (b.uploaded_at || "").localeCompare(a.uploaded_at || ""));
+  $("#docRows").innerHTML = docs.length ? docs.map((d) => `<tr>
+    <td><div class="vendor">📄 ${esc(d.filename || "—")}</div></td>
+    <td><span class="doc-type">${esc(d.type || "doc")}</span></td>
+    <td>${esc(docVendor(d.contract_id) || "—")}</td>
+    <td>${esc((d.uploaded_at || "").slice(0, 10))}</td>
+    <td>${d.archived ? '<span class="tag t-red">Archived</span>' : '<span class="tag t-green">Current</span>'}</td>
+    <td style="text-align:right;white-space:nowrap">
+      <a class="btn ghost" href="/api/documents/${esc(d.id)}/view" target="_blank" rel="noopener">Open</a>
+      <button class="btn ghost" onclick="toggleArchive('${esc(d.id)}')">${d.archived ? "Restore" : "Archive"}</button></td></tr>`).join("")
     : `<tr><td colspan="6" class="empty">No documents match.</td></tr>`;
-
-  $$("#docRows [data-open]").forEach((b) =>
-    b.addEventListener("click", () => openDoc(b.dataset.open))
-  );
-  $$("#docRows [data-arch]").forEach((b) =>
-    b.addEventListener("click", () => toggleArchive(b.dataset.arch))
-  );
 }
-
-// Open a document in the embedded viewer. If the doc belongs to a contract,
-// include its siblings (e.g. agreement + COI) as tabs.
-function openDoc(id) {
-  const doc = state.documents.find((d) => d.id === id);
-  let docs;
-  if (doc && doc.contract_id) {
-    docs = state.documents.filter((d) => d.contract_id === doc.contract_id);
-  } else {
-    docs = doc ? [doc] : [{ id, filename: id }];
-  }
-  docs.sort((a, b) => (a.type === "coi" ? 1 : 0) - (b.type === "coi" ? 1 : 0));
-  const idx = Math.max(0, docs.findIndex((d) => d.id === id));
-  openViewer(docs, idx);
-}
-
 async function toggleArchive(id) {
-  const doc = state.documents.find((d) => d.id === id);
-  if (!doc) return;
+  const d = state.documents.find((x) => x.id === id); if (!d) return;
+  try { await api(`/api/documents/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ archived: !d.archived }) });
+    toast(d.archived ? "Restored" : "Archived"); await loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ===== Upload (real: S3 + Bedrock async parse) ===== */
+const FIELDS = [
+  { k: "vendor", label: "Vendor", t: "text" },
+  { k: "cat", label: "Category", t: "text" },
+  { k: "sub", label: "Subcategory", t: "text" },
+  { k: "college", label: "Campus", t: "select", opts: ["", "Foothill", "De Anza", "District"] },
+  { k: "contract_head", label: "Contract head", t: "text" },
+  { k: "contract_head_email", label: "Contract head email", t: "text" },
+  { k: "value", label: "Value ($)", t: "number" },
+  { k: "start", label: "Start date", t: "date" },
+  { k: "end", label: "End date", t: "date" },
+  { k: "po", label: "PO number", t: "text" },
+  { k: "poEnd", label: "PO end date", t: "date" },
+  { k: "ins", label: "Insurance expiry", t: "date" },
+  { k: "addl", label: "Additional insured", t: "select", opts: ["", "Yes", "No"] },
+  { k: "scope", label: "Scope", t: "textarea" },
+  { k: "summary", label: "AI summary", t: "textarea" },
+];
+function openUpload() {
+  $("#modal").classList.add("show");
+  $("#uploadBox").classList.remove("wide");
+  $("#uploadPrompt").style.display = "block";
+  $("#extract").classList.remove("show");
+  $("#uploadStatus").innerHTML = "";
+  $("#pdfframe").src = "";
+  state.pendingUpload = null;
+}
+function closeUpload() { $("#modal").classList.remove("show"); $("#pdfframe").src = ""; }
+
+async function uploadFile(file) {
+  $("#uploadStatus").innerHTML = `<span class="spinner"></span> Uploading <b>${esc(file.name)}</b>…`;
+  const fd = new FormData(); fd.append("file", file);
+  let res;
+  try { res = await api("/api/upload", { method: "POST", body: fd }); }
+  catch (e) { $("#uploadStatus").innerHTML = `<span class="badge badge-bad">Upload failed</span> <span class="mini">${esc(e.message)}</span>`; return toast(e.message, true); }
+  state.pendingUpload = res;
+  // switch to extract view with the document preview
+  $("#uploadPrompt").style.display = "none";
+  $("#uploadBox").classList.add("wide");
+  $("#extract").classList.add("show");
+  $("#pdfframe").src = `/api/documents/${res.document.id}/view`;
+  await loadAll(); // refresh doc hub
+  if (res.async) {
+    $("#extractMethod").textContent = "Parsing with Bedrock (Claude Sonnet 4.5)…";
+    $("#scan").classList.remove("hidden");
+    renderExtractFields({});
+    const fields = await pollParse(res.document.id);
+    state.pendingUpload.fields = fields;
+    $("#scan").classList.add("hidden");
+    renderExtractFields(fields);
+  } else {
+    $("#scan").classList.add("hidden");
+    renderExtractFields(res.fields || {});
+  }
+}
+async function pollParse(docId, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    await sleep(2000);
+    let doc; try { doc = await api("/api/documents/" + docId); } catch (e) { continue; }
+    if (doc.parse_status === "done") { $("#extractMethod").textContent = "Extracted by AI — verify & edit."; return doc.parsed_fields || {}; }
+    if (doc.parse_status === "error") { $("#extractMethod").innerHTML = `<span class="badge badge-bad">AI parse failed</span> ${esc(doc.parse_error || "")} — fill in manually.`; return {}; }
+  }
+  $("#extractMethod").innerHTML = `<span class="badge badge-warn">Parsing timed out</span> — fill in manually.`;
+  return {};
+}
+function fieldInput(f, val) {
+  const v = val == null ? "" : val;
+  if (f.t === "select") return `<select data-key="${f.k}">${f.opts.map((o) => `<option value="${esc(o)}" ${String(o) === String(v) ? "selected" : ""}>${o || "—"}</option>`).join("")}</select>`;
+  if (f.t === "textarea") return `<textarea data-key="${f.k}">${esc(v)}</textarea>`;
+  return `<input type="${f.t}" data-key="${f.k}" value="${esc(v)}">`;
+}
+function renderExtractFields(fields) {
+  const meta = fields._meta;
+  if (meta && meta.method) $("#extractMethod").textContent = `Extracted via ${String(meta.method).replace(/_/g, " ")} — verify & edit.`;
+  $("#exrows").innerHTML = FIELDS.map((f) => `<div class="exrow"><div class="k">${f.label}</div><div class="v">${fieldInput(f, fields[f.k])}</div></div>`).join("");
+}
+function collectFields() {
+  const out = {};
+  $$("#exrows [data-key]").forEach((el) => { let v = el.value; if (el.type === "number") v = v === "" ? null : Number(v); else if (v === "") v = null; out[el.dataset.key] = v; });
+  return out;
+}
+async function saveContract() {
+  const payload = collectFields();
+  if (!payload.vendor) return toast("Vendor is required", true);
+  if (state.pendingUpload && state.pendingUpload.document) payload.document_id = state.pendingUpload.document.id;
   try {
-    await api(`/api/documents/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ archived: !doc.archived }),
-    });
-    toast(doc.archived ? "Restored" : "Archived");
-    await loadAll();
-  } catch (e) {
-    toast(e.message, true);
-  }
+    await api("/api/contracts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    toast("Contract saved"); closeUpload(); await loadAll();
+    const btn = $(`.sidebar nav button[onclick*="'contracts'"]`); showView("contracts", btn);
+  } catch (e) { toast(e.message, true); }
 }
 
-// ---- Document viewer -------------------------------------------------------
-const isImage = (f) => /\.(png|jpe?g|gif|tiff?)$/i.test(f || "");
-const mediaTag = (filename, url) =>
-  isImage(filename)
-    ? `<img src="${url}" alt="${esc(filename)}" />`
-    : `<iframe src="${url}" title="${esc(filename)}"></iframe>`;
+/* ===== Wire up ===== */
+$("#today").textContent = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+["search", "fDept", "fStatus", "fIns"].forEach((id) => $("#" + id).addEventListener("input", render));
+$("#docSearch").addEventListener("input", (e) => { state.docQuery = e.target.value.toLowerCase().trim(); buildDocHub(); });
+$("#docScope").addEventListener("change", (e) => { state.docScope = e.target.value; buildDocHub(); });
+const drop = $("#drop"), fileInput = $("#fileInput");
+drop.addEventListener("click", () => fileInput.click());
+["dragover", "dragenter"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.style.borderColor = "var(--crim)"; }));
+["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.style.borderColor = ""; }));
+drop.addEventListener("drop", (e) => { if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener("change", () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeDetail(); closeUpload(); closeMessage(); } });
 
-function openViewer(docs, index = 0) {
-  if (!docs || !docs.length) return toast("No document to view", true);
-  state.viewerDocs = docs;
-  showViewerDoc(index);
-  $("#viewerBackdrop").classList.add("open");
-  $("#viewer").classList.add("open");
-}
-
-async function showViewerDoc(index) {
-  const docs = state.viewerDocs || [];
-  const d = docs[index];
-  if (!d) return;
-  $("#viewerTabs").innerHTML = docs
-    .map(
-      (doc, i) =>
-        `<button class="vtab ${i === index ? "active" : ""}" data-i="${i}">${
-          doc.type === "coi" ? "📋 COI" : "📄 Contract"
-        } · ${esc(doc.filename)}</button>`
-    )
-    .join("");
-  $$("#viewerTabs .vtab").forEach((b) =>
-    b.addEventListener("click", () => showViewerDoc(+b.dataset.i))
-  );
-  const body = $("#viewerBody");
-  body.innerHTML = `<div class="empty" style="color:#e2e8f0"><span class="spinner"></span> Loading ${esc(d.filename)}...</div>`;
-  $("#viewerOpen").removeAttribute("href");
-  try {
-    const { url } = await api(`/api/documents/${d.id}/url`);
-    body.innerHTML = mediaTag(d.filename, url);
-    $("#viewerOpen").href = url;
-  } catch (e) {
-    body.innerHTML = `<div class="empty" style="color:#e2e8f0">Could not load: ${esc(e.message)}</div>`;
-  }
-}
-
-function closeViewer() {
-  $("#viewerBackdrop").classList.remove("open");
-  $("#viewer").classList.remove("open");
-  $("#viewerBody").innerHTML = "";
-}
-$("#viewerClose").addEventListener("click", closeViewer);
-$("#viewerBackdrop").addEventListener("click", closeViewer);
-document.addEventListener("keydown", (e) => e.key === "Escape" && closeViewer());
-
-async function embedPreview(doc) {
-  const box = $("#extractPreview");
-  if (!doc) {
-    box.innerHTML = `<div class="placeholder">Document preview</div>`;
-    return;
-  }
-  box.innerHTML = `<div class="placeholder"><span class="spinner"></span></div>`;
-  try {
-    const { url } = await api(`/api/documents/${doc.id}/url`);
-    box.innerHTML = mediaTag(doc.filename, url);
-  } catch (e) {
-    box.innerHTML = `<div class="placeholder">Preview unavailable<br>${esc(e.message)}</div>`;
-  }
-}
-
-// ---- Boot ------------------------------------------------------------------
 loadAll();

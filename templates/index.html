@@ -1,183 +1,228 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>ConTrackt - FHDA Contract & Insurance Manager</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>ConTrackt — Foothill-De Anza CCD</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
-  <div class="nav-backdrop" id="navBackdrop"></div>
-  <aside class="sidebar" id="sidebar">
-    <div class="brand">
-      <div class="logo">CT</div>
-      <div><b>ConTrackt</b><small>Foothill-De Anza CCD</small></div>
+<div class="app">
+
+  <!-- ===== SIDEBAR ===== -->
+  <aside class="sidebar">
+    <div class="side-brand">
+      <div class="logo-badge">
+        <img src="{{ url_for('static', filename='assets/fhda-mark.png') }}" alt="Foothill-De Anza Community College District logo">
+      </div>
+      <div>
+        <div class="bt">ConTrackt</div>
+        <div class="bs">Foothill-De Anza · Contracts &amp; Risk</div>
+      </div>
     </div>
-    <nav class="nav" id="nav">
-      <button data-view="dashboard" class="active"><span class="ic">▤</span><span>Dashboard</span></button>
-      <button data-view="upload"><span class="ic">⬆</span><span>Upload &amp; Extract</span></button>
-      <button data-view="alerts"><span class="ic">⏰</span><span>Alerts <span id="alertCount"></span></span></button>
-      <button data-view="documents"><span class="ic">🗂</span><span>Document Hub</span></button>
+
+    <nav aria-label="Primary">
+      <div class="side-cap">Manage</div>
+      <button class="on" onclick="showView('contracts',this)"><span class="ic">📄</span><span>Contracts</span></button>
+      <button onclick="showView('insurance',this)"><span class="ic">🛡️</span><span>Insurance</span></button>
+      <button id="navNotifBtn" onclick="showView('alerts',this)"><span class="ic">✉️</span><span>Notifications</span><span class="nav-badge" id="navBadge">0</span></button>
+      <button onclick="showView('documents',this)"><span class="ic">🗂️</span><span>Documents</span></button>
     </nav>
-    <div class="foot">AWS MVP · DynamoDB · S3 · Bedrock</div>
+
+    <div class="side-foot">
+      AWS serverless MVP<br>
+      S3 · DynamoDB · Bedrock (Claude Sonnet 4.5) · SES
+    </div>
   </aside>
 
+  <!-- ===== MAIN ===== -->
   <div class="main">
+
+    <!-- TOPBAR -->
     <div class="topbar">
-      <button class="hamburger" id="hamburger" aria-label="Open menu" aria-expanded="false">&#9776;</button>
-      <div class="titles">
-        <h1 id="viewTitle">Dashboard</h1>
-        <div class="sub" id="viewSub">Overview of contracts, insurance, and purchase orders</div>
-      </div>
-      <button class="btn" id="quickUpload">+ New<span class="hide-xs"> Document</span></button>
+      <label class="searchbox" for="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input type="search" id="search" placeholder="Search vendor, scope, PO#…" aria-label="Search contracts">
+      </label>
+      <div class="top-spacer"></div>
+      <div class="date-pill">📅 <span id="today"></span></div>
+      <button class="icon-btn" aria-label="Notifications" onclick="document.getElementById('navNotifBtn').click()">🔔<span class="bdot"></span></button>
+      <div class="avatar" title="Purchasing, Contracts &amp; Risk">PC</div>
     </div>
 
     <div class="content">
-      <!-- DASHBOARD -->
-      <section class="view active" id="view-dashboard">
-        <div class="kpis" id="kpis"></div>
-        <div class="grid-2">
-          <div class="card">
-            <h3 class="section-title">Contracts by Category</h3>
-            <div id="catBars"></div>
-          </div>
-          <div class="card">
-            <h3 class="section-title">Contracts by Campus</h3>
-            <div id="collegeBars"></div>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <div class="head">
-            <h3 class="section-title" style="margin:0">Agreement / Contract - PO Pairings</h3>
-            <span class="muted" id="pairCount"></span>
-          </div>
-          <div class="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Agreement</th><th>Vendor</th><th>Campus</th>
-                  <th>PO #</th><th class="mono">Value</th><th>End Date</th><th>Status</th>
-                </tr>
-              </thead>
-              <tbody id="pairRows"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
 
-      <!-- UPLOAD -->
-      <section class="view" id="view-upload">
-        <div class="card">
-          <h3 class="section-title">Upload a document</h3>
-          <p class="muted" style="margin-top:-4px">
-            Drop a contract, purchase order, or certificate of insurance (PDF or image).
-            It is stored in S3 and parsed by AI. Review and edit the extracted fields, then save.
-          </p>
-          <div class="drop" id="drop">
-            <div class="big">⬆</div>
-            <div><b>Click to browse</b> or drag a file here</div>
-            <div class="muted" style="font-size:12px;margin-top:6px">PDF, PNG, JPG, TIFF · up to {{ '' }}20MB</div>
-            <input type="file" id="fileInput" class="hidden" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" />
+      <!-- HERO -->
+      <div class="hero">
+        <div class="h-txt">
+          <span class="pulse-chip">✨ Portfolio pulse</span>
+          <h2 id="heroHeadline">Loading portfolio…</h2>
+          <p>Stay ahead of renewals — review the lifecycle, request updated COIs, and keep the district covered.</p>
+          <div class="h-actions">
+            <button class="btn" onclick="openUpload()">＋ Upload contract</button>
           </div>
-          <div id="uploadStatus" style="margin-top:14px"></div>
         </div>
+      </div>
 
-        <div class="card hidden" id="extractCard" style="margin-top:16px">
-          <h3 class="section-title">Review extracted fields <span class="muted" id="extractMethod"></span></h3>
-          <p class="muted" style="margin-top:-4px">The document is on the left. Edit anything the AI got wrong, then save.</p>
-          <div class="extract-layout">
-            <div class="extract-preview" id="extractPreview">
-              <div class="placeholder">Document preview</div>
+      <!-- CONTENT GRID -->
+      <div class="cgrid">
+        <div class="col-main">
+
+          <!-- CONTRACTS VIEW -->
+          <div class="view on" id="v-contracts">
+            <div class="cards" id="cards"></div>
+            <div class="panel">
+              <div class="panel-head">
+                <div class="ph-title">Contracts</div>
+                <div class="filters">
+                  <select id="fDept"><option value="">All categories</option></select>
+                  <select id="fStatus">
+                    <option value="">All contract status</option>
+                    <option value="Active">Active</option>
+                    <option value="Expiring">Expiring soon</option>
+                    <option value="Expired">Expired</option>
+                  </select>
+                  <select id="fIns">
+                    <option value="">All insurance status</option>
+                    <option value="__any">Insurance needs attention</option>
+                    <option value="Current">Insurance current</option>
+                    <option value="Expiring">Insurance expiring</option>
+                    <option value="Lapsed">Insurance lapsed</option>
+                  </select>
+                  <span class="count" id="count"></span>
+                  <button class="btn ghost" onclick="resetF()">Reset</button>
+                </div>
+              </div>
+              <div class="tablewrap">
+                <table><thead><tr id="head"></tr></thead><tbody id="rows"></tbody></table>
+              </div>
             </div>
-            <div>
-              <div class="form-grid" id="extractForm"></div>
-              <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
-                <button class="btn ghost" id="discardBtn">Discard</button>
-                <button class="btn" id="saveContractBtn">Save Contract</button>
+            <div class="foot">Click any row to open the contract summary, linked documents, and insurance &amp; PO tracking.</div>
+          </div>
+
+          <!-- INSURANCE VIEW -->
+          <div class="view" id="v-insurance">
+            <p style="color:var(--muted);margin:2px 0 16px">Insurance certificate (COI) status rolled up by category. Certificates renew annually; multi-year contracts need a fresh COI each year.</p>
+            <div class="roll">
+              <table><thead><tr>
+                <th style="cursor:default">Category</th><th style="cursor:default">Contracts</th>
+                <th style="cursor:default">Coverage health</th><th style="cursor:default">Current</th>
+                <th style="cursor:default">Expiring ≤30d</th><th style="cursor:default">Lapsed</th>
+                <th style="cursor:default">Missing endorsement</th>
+              </tr></thead><tbody id="insRows"></tbody></table>
+            </div>
+          </div>
+
+          <!-- ALERTS / NOTIFICATIONS VIEW -->
+          <div class="view" id="v-alerts">
+            <div class="sched">✉️ <b>Automated rule:</b> emails go to each contract's head (cc: Risk) at <b>30 days</b> and again at <b>2 weeks</b> before expiry. Below are the contracts within 30 days.
+              <button class="btn" style="margin-left:12px" onclick="sendAlertEmails(false)">Send alert emails</button>
+            </div>
+            <div id="emails"></div>
+          </div>
+
+          <!-- DOCUMENT HUB VIEW -->
+          <div class="view" id="v-documents">
+            <div class="panel">
+              <div class="panel-head">
+                <div class="ph-title">Document Hub</div>
+                <div class="hub-tools">
+                  <input type="search" id="docSearch" placeholder="Search by name, type, vendor…">
+                  <select id="docScope">
+                    <option value="current">Current</option>
+                    <option value="archived">Archived</option>
+                    <option value="all">All</option>
+                  </select>
+                </div>
+              </div>
+              <div class="tablewrap">
+                <table>
+                  <thead><tr><th style="cursor:default">Document</th><th style="cursor:default">Type</th><th style="cursor:default">Linked vendor</th><th style="cursor:default">Uploaded</th><th style="cursor:default">Status</th><th style="cursor:default"></th></tr></thead>
+                  <tbody id="docRows"></tbody>
+                </table>
               </div>
             </div>
           </div>
-        </div>
-      </section>
 
-      <!-- ALERTS -->
-      <section class="view" id="view-alerts">
-        <div class="card alerts-head">
-          <div>
-            <h3 class="section-title" style="margin:0">Expiring within 30 days</h3>
-            <p class="muted" style="margin:4px 0 0">Insurance (COI), contract end, and purchase order expirations. Contract heads with an email on file are notified; click an alert to view the message sent.</p>
-          </div>
-          <button class="btn" id="sendAlertsBtn">✉ Send alert emails</button>
-        </div>
-        <div id="alertList"></div>
-      </section>
+        </div><!-- /col-main -->
 
-      <!-- DOCUMENTS -->
-      <section class="view" id="view-documents">
-        <div class="toolbar">
-          <input type="search" id="docSearch" placeholder="Search documents by name, vendor, type..." />
-          <div class="seg" id="docSeg">
-            <button data-scope="current" class="active">Current</button>
-            <button data-scope="archived">Archived</button>
-            <button data-scope="all">All</button>
+        <!-- RIGHT RAIL -->
+        <aside class="rail" aria-label="Overview">
+          <div class="widget">
+            <h4>Upcoming renewals</h4>
+            <div class="w-sub">Soonest contract end dates</div>
+            <div id="railUpcoming"></div>
           </div>
-        </div>
-        <div class="table-wrap">
-          <div class="table-scroll">
-            <table>
-              <thead>
-                <tr><th>Document</th><th>Type</th><th>Linked Vendor</th><th>Uploaded</th><th>Status</th><th></th></tr>
-              </thead>
-              <tbody id="docRows"></tbody>
-            </table>
+          <div class="widget">
+            <h4>Portfolio health</h4>
+            <div class="w-sub">Share of contracts in good standing</div>
+            <div id="railRings"></div>
           </div>
-        </div>
-      </section>
-    </div>
-  </div>
+        </aside>
 
-  <!-- Detail drawer -->
-  <div class="drawer-backdrop" id="backdrop"></div>
-  <div class="drawer" id="drawer">
-    <div class="dhead">
-      <div>
-        <h2 id="drawerTitle" style="margin:0 0 4px">Contract</h2>
-        <div class="muted" id="drawerSub"></div>
+      </div><!-- /cgrid -->
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- CONTRACT DETAIL OVERLAY -->
+<div class="detail" id="detail"><div class="detail-inner" id="detailInner"></div></div>
+
+<!-- UPLOAD MODAL (real: S3 + Bedrock async parse) -->
+<div class="modal" id="modal">
+  <div class="mbox" id="uploadBox">
+    <div class="mh"><h3>Upload contract</h3><button class="close" style="position:static" onclick="closeUpload()">×</button></div>
+    <div class="mbody">
+      <div id="uploadPrompt">
+        <div class="drop" id="drop">
+          <div class="big">📄</div>
+          <div style="margin-top:6px"><b>Click to browse</b> or drag a file here</div>
+          <div class="mini" style="margin-top:6px">PDF, PNG, JPG, TIFF · stored in S3, parsed by AI</div>
+          <input type="file" id="fileInput" class="hidden" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff">
+        </div>
+        <div class="status-line" id="uploadStatus"></div>
+        <div class="method">
+          <b>How extraction works:</b> the file is stored in S3, then a Lambda runs <b>Amazon Bedrock (Claude Sonnet 4.5)</b> to read the document and return structured fields (Textract fallback). Review and correct the fields below, then save.
+        </div>
       </div>
-      <button class="close-x" id="drawerClose">&times;</button>
-    </div>
-    <div class="dbody" id="drawerBody"></div>
-    <div class="dfoot" id="drawerFoot"></div>
-  </div>
-
-  <!-- Document viewer -->
-  <div class="viewer-backdrop" id="viewerBackdrop"></div>
-  <div class="viewer" id="viewer">
-    <div class="vhead">
-      <div class="vtabs" id="viewerTabs"></div>
-      <div class="vactions">
-        <a class="btn ghost sm" id="viewerOpen" target="_blank" rel="noopener">Open in new tab &#8599;</a>
-        <button class="close-x" id="viewerClose">&times;</button>
+      <div class="extract" id="extract">
+        <div class="split">
+          <div class="pdfpane">
+            <div class="pl"><span>📄 Uploaded document</span><span class="mini">cross-check the fields</span></div>
+            <iframe id="pdfframe" title="Uploaded document"></iframe>
+          </div>
+          <div class="fieldpane">
+            <div class="fh">Extracted fields <span style="font-weight:400;color:var(--muted)">— verify &amp; edit</span></div>
+            <div class="fsub" id="extractMethod"></div>
+            <div class="scanline hidden" id="scan"></div>
+            <div class="exscroll" id="exrows"></div>
+            <div style="display:flex;gap:10px;margin-top:14px">
+              <button class="btn ghost" onclick="closeUpload()">Cancel</button>
+              <button class="btn" style="flex:1;justify-content:center" id="saveContractBtn" onclick="saveContract()">✓ Save contract</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="vbody" id="viewerBody"></div>
   </div>
+</div>
 
-  <!-- Sent-message viewer -->
-  <div class="viewer-backdrop" id="msgBackdrop"></div>
-  <div class="msg-modal" id="msgModal">
-    <div class="mhead">
-      <div>
-        <b id="msgSubject">Message</b>
-        <div class="muted" id="msgMeta" style="font-size:12px;margin-top:3px"></div>
-      </div>
-      <button class="close-x" id="msgClose">&times;</button>
+<!-- SENT-MESSAGE MODAL -->
+<div class="modal" id="msgModal">
+  <div class="mbox">
+    <div class="mh"><h3 id="msgSubject">Message</h3><button class="close" style="position:static" onclick="closeMessage()">×</button></div>
+    <div class="mbody">
+      <div class="mini" id="msgMeta" style="margin-bottom:12px"></div>
+      <div id="msgBody"></div>
     </div>
-    <div class="mbody" id="msgBody"></div>
   </div>
+</div>
 
-  <div class="toast" id="toast"></div>
+<div class="toast" id="toast"></div>
 
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
