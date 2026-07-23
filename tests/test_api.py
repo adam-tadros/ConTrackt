@@ -103,7 +103,9 @@ def test_create_and_update_contract(client):
 
 
 def test_upload_stores_and_parses(client, monkeypatch):
-    monkeypatch.setattr(storage, "upload_bytes", lambda *a, **k: "uploads/x.pdf")
+    # sync path: ASYNC_PARSE disabled
+    monkeypatch.setattr(flask_app.config, "ASYNC_PARSE", False)
+    monkeypatch.setattr(storage, "upload_to_key", lambda *a, **k: a[0] if a else "uploads/x.pdf")
     monkeypatch.setattr(
         ai_parser, "parse_document",
         lambda *a, **k: {"vendor": "Parsed Vendor", "value": 99,
@@ -113,8 +115,10 @@ def test_upload_stores_and_parses(client, monkeypatch):
     r = client.post("/api/upload", data=data, content_type="multipart/form-data")
     assert r.status_code == 201
     body = r.get_json()
-    assert body["document"]["s3_key"] == "uploads/x.pdf"
+    assert body["async"] is False
+    assert body["document"]["s3_key"].startswith("uploads/")
     assert body["fields"]["vendor"] == "Parsed Vendor"
+    assert body["document"]["parse_status"] == "done"
 
 
 def test_upload_rejects_bad_extension(client):
@@ -134,3 +138,33 @@ def test_document_archive_toggle(client):
     r = client.patch("/api/documents/d1", json={"archived": True})
     assert r.status_code == 200
     assert r.get_json()["archived"] is True
+
+
+def test_get_document(client):
+    r = client.get("/api/documents/d1")
+    assert r.status_code == 200
+    assert r.get_json()["filename"] == "acme.pdf"
+
+
+def test_upload_async_sets_pending_and_skips_inline_parse(client, monkeypatch):
+    monkeypatch.setattr(flask_app.config, "ASYNC_PARSE", True)
+    monkeypatch.setattr(flask_app.config, "DEMO_MODE", False)
+    monkeypatch.setattr(storage, "upload_to_key", lambda *a, **k: "uploads/x.pdf")
+
+    def _boom(*a, **k):
+        raise AssertionError("parse_document must NOT run in async mode")
+
+    monkeypatch.setattr(ai_parser, "parse_document", _boom)
+
+    data = {"file": (io.BytesIO(b"%PDF-1.4"), "async.pdf")}
+    r = client.post("/api/upload", data=data, content_type="multipart/form-data")
+    assert r.status_code == 201
+    body = r.get_json()
+    assert body["async"] is True
+    assert body["fields"] is None
+    assert body["document"]["parse_status"] == "pending"
+
+    # the record is retrievable for polling
+    did = body["document"]["id"]
+    doc = client.get(f"/api/documents/{did}").get_json()
+    assert doc["parse_status"] == "pending"

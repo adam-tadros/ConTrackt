@@ -50,6 +50,10 @@ BEDROCK_MODEL_ID = os.environ.get(
 TEXTRACT_REGION = os.environ.get("TEXTRACT_REGION", AWS_REGION)
 
 # --- App behaviour --------------------------------------------------------
+# When true (and not demo), uploads are parsed asynchronously by the Lambda
+# triggered on S3 upload; the app returns immediately and the UI polls.
+ASYNC_PARSE = os.environ.get("ASYNC_PARSE", "").lower() in ("1", "true", "yes")
+
 MAX_UPLOAD_MB = _int("MAX_UPLOAD_MB", 20)
 ALERT_WINDOW_DAYS = _int("ALERT_WINDOW_DAYS", 30)
 ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "tiff", "tif"}

@@ -301,22 +301,57 @@ drop.addEventListener("click", () => fileInput.click());
 drop.addEventListener("drop", (e) => { if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]); });
 fileInput.addEventListener("change", () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); });
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function uploadFile(file) {
-  $("#uploadStatus").innerHTML = `<span class="spinner"></span> Uploading & parsing <b>${esc(file.name)}</b>...`;
+  $("#uploadStatus").innerHTML = `<span class="spinner"></span> Uploading <b>${esc(file.name)}</b>...`;
   $("#extractCard").classList.add("hidden");
   const fd = new FormData();
   fd.append("file", file);
   try {
     const res = await api("/api/upload", { method: "POST", body: fd });
     state.pendingDoc = res;
-    $("#uploadStatus").innerHTML = `✅ Stored <b>${esc(file.name)}</b>. Review the extracted fields beside the document.`;
     renderExtractForm(res.fields || {});
     embedPreview(res.document);
     await loadAll(); // refresh doc hub
+
+    if (res.async) {
+      // Parsing runs in AWS Lambda (triggered by the S3 upload). Poll for it.
+      $("#uploadStatus").innerHTML = `☁️ Stored <b>${esc(file.name)}</b> in S3. <span class="spinner"></span> AI parsing in Lambda...`;
+      const fields = await pollParse(res.document.id, file.name);
+      state.pendingDoc.fields = fields;
+      renderExtractForm(fields || {});
+      embedPreview(res.document);
+    } else {
+      $("#uploadStatus").innerHTML = `✅ Stored <b>${esc(file.name)}</b>. Review the extracted fields beside the document.`;
+    }
   } catch (e) {
     $("#uploadStatus").innerHTML = `<span class="badge expired">Upload failed</span> <span class="muted">${esc(e.message)}</span>`;
     toast(e.message, true);
   }
+}
+
+// Poll a document's parse status until the Lambda finishes (or times out).
+async function pollParse(docId, fname, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    await sleep(2000);
+    let doc;
+    try {
+      doc = await api(`/api/documents/${docId}`);
+    } catch (e) {
+      continue;
+    }
+    if (doc.parse_status === "done") {
+      $("#uploadStatus").innerHTML = `✅ Parsed <b>${esc(fname)}</b> with AI (Lambda). Review the fields.`;
+      return doc.parsed_fields || {};
+    }
+    if (doc.parse_status === "error") {
+      $("#uploadStatus").innerHTML = `<span class="badge expired">AI parse failed</span> <span class="muted">${esc(doc.parse_error || "")}</span> - fill the fields manually.`;
+      return { _meta: { ok: false, error: doc.parse_error } };
+    }
+  }
+  $("#uploadStatus").innerHTML = `<span class="badge expiring">Parsing is taking longer than expected</span> - fill fields manually or wait and refresh.`;
+  return { _meta: { ok: false, error: "timeout" } };
 }
 
 function renderExtractForm(fields) {

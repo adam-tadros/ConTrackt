@@ -38,6 +38,9 @@ DOCUMENT_FIELDS = [
     "size",
     "content_type",
     "archived",
+    "parse_status",   # pending | processing | done | error | skipped
+    "parsed_fields",  # dict of AI-extracted fields (async parse result)
+    "parse_error",    # error message if parse_status == error
 ]
 
 

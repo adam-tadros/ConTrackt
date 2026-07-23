@@ -159,6 +159,14 @@ def document_url(did):
     return jsonify({"url": url})
 
 
+@app.route("/api/documents/<did>", methods=["GET"])
+def get_document(did):
+    doc = db.get_document(did)
+    if not doc:
+        return _err("document not found", 404)
+    return jsonify(doc)
+
+
 @app.route("/api/documents/<did>", methods=["PATCH"])
 def update_document(did):
     if not db.get_document(did):
@@ -188,25 +196,42 @@ def upload():
     doc_type = request.form.get("type", "contract")
     do_parse = request.form.get("parse", "true").lower() != "false"
 
-    # 1) store in S3
+    key = storage.build_key(f.filename)
+    async_parse = do_parse and config.ASYNC_PARSE and not config.DEMO_MODE
+
+    base_doc = {
+        "filename": f.filename,
+        "s3_key": key,
+        "type": doc_type,
+        "size": len(data),
+        "content_type": content_type,
+        "parse_status": (
+            "pending" if async_parse else ("processing" if do_parse else "skipped")
+        ),
+    }
+
+    if async_parse:
+        # Create the record FIRST so the S3-triggered Lambda can find it,
+        # then write the object (which fires the event).
+        doc = db.create_document(base_doc)
+        try:
+            storage.upload_to_key(key, data, content_type)
+        except Exception as e:  # noqa: BLE001
+            log.exception("s3 upload failed")
+            db.update_document(doc["id"], {"parse_status": "error", "parse_error": str(e)})
+            return _err(f"upload failed: {e}", 502)
+        # Parsing happens in Lambda; the UI polls GET /api/documents/<id>.
+        return jsonify({"document": doc, "fields": None, "async": True}), 201
+
+    # Synchronous path (demo mode, or ASYNC_PARSE disabled).
     try:
-        key = storage.upload_bytes(data, f.filename, content_type)
+        storage.upload_to_key(key, data, content_type)
     except Exception as e:  # noqa: BLE001
         log.exception("s3 upload failed")
         return _err(f"upload failed: {e}", 502)
 
-    # 2) create document record
-    doc = db.create_document(
-        {
-            "filename": f.filename,
-            "s3_key": key,
-            "type": doc_type,
-            "size": len(data),
-            "content_type": content_type,
-        }
-    )
+    doc = db.create_document(base_doc)
 
-    # 3) synchronous AI parse
     fields = None
     if do_parse:
         try:
@@ -214,8 +239,13 @@ def upload():
         except Exception as e:  # noqa: BLE001
             log.exception("parse failed")
             fields = {"_meta": {"ok": False, "error": str(e)}}
+        db.update_document(
+            doc["id"], {"parse_status": "done", "parsed_fields": fields}
+        )
+        doc["parse_status"] = "done"
+        doc["parsed_fields"] = fields
 
-    return jsonify({"document": doc, "fields": fields}), 201
+    return jsonify({"document": doc, "fields": fields, "async": False}), 201
 
 
 # --------------------------------------------------------------------------

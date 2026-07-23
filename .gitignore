@@ -4,3 +4,10 @@ __pycache__/
 .env
 .pytest_cache/
 *.log
+
+# Deployment working files (contain secrets / generated / account-specific)
+deploy/bundle-*.zip
+deploy/_version_label.txt
+deploy/options.json
+deploy/lambda_build/
+deploy/lambda.zip

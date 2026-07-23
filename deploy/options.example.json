@@ -1,0 +1,18 @@
+[
+  { "Namespace": "aws:autoscaling:launchconfiguration", "OptionName": "IamInstanceProfile", "Value": "contrackt-eb-ec2-profile" },
+  { "Namespace": "aws:ec2:instances", "OptionName": "InstanceTypes", "Value": "t3.small" },
+  { "Namespace": "aws:elasticbeanstalk:environment", "OptionName": "EnvironmentType", "Value": "SingleInstance" },
+  { "Namespace": "aws:ec2:vpc", "OptionName": "VPCId", "Value": "vpc-XXXXXXXX" },
+  { "Namespace": "aws:ec2:vpc", "OptionName": "Subnets", "Value": "subnet-XXXXXXXX" },
+  { "Namespace": "aws:ec2:vpc", "OptionName": "AssociatePublicIpAddress", "Value": "true" },
+  { "Namespace": "aws:elasticbeanstalk:healthreporting:system", "OptionName": "SystemType", "Value": "basic" },
+  { "Namespace": "aws:elasticbeanstalk:application:environment", "OptionName": "AWS_REGION", "Value": "us-west-2" },
+  { "Namespace": "aws:elasticbeanstalk:application:environment", "OptionName": "BEDROCK_REGION", "Value": "us-west-2" },
+  { "Namespace": "aws:elasticbeanstalk:application:environment", "OptionName": "BEDROCK_MODEL_ID", "Value": "anthropic.claude-3-haiku-20240307-v1:0" },
+  { "Namespace": "aws:elasticbeanstalk:application:environment", "OptionName": "S3_BUCKET", "Value": "your-bucket-name" },
+  { "Namespace": "aws:elasticbeanstalk:application:environment", "OptionName": "DDB_CONTRACTS_TABLE", "Value": "contrackt_contracts" },
+  { "Namespace": "aws:elasticbeanstalk:application:environment", "OptionName": "DDB_DOCUMENTS_TABLE", "Value": "contrackt_documents" },
+  { "Namespace": "aws:elasticbeanstalk:application:environment", "OptionName": "ALERT_WINDOW_DAYS", "Value": "30" },
+  { "Namespace": "aws:elasticbeanstalk:application:environment", "OptionName": "MAX_UPLOAD_MB", "Value": "20" },
+  { "Namespace": "aws:elasticbeanstalk:application:environment", "OptionName": "SECRET_KEY", "Value": "REPLACE_WITH_RANDOM_SECRET" }
+]

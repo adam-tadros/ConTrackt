@@ -15,9 +15,8 @@ def build_key(filename: str) -> str:
     return f"{config.S3_UPLOAD_PREFIX}{uuid.uuid4().hex}_{_safe_name(filename)}"
 
 
-def upload_bytes(data: bytes, filename: str, content_type: str) -> str:
-    """Upload raw bytes to S3 (or the in-memory store) and return the key."""
-    key = build_key(filename)
+def upload_to_key(key: str, data: bytes, content_type: str) -> str:
+    """Write bytes to a specific S3 key (or the in-memory store)."""
     if config.DEMO_MODE:
         import memstore
         memstore.BLOBS[key] = (data, content_type or "application/octet-stream")
@@ -29,6 +28,11 @@ def upload_bytes(data: bytes, filename: str, content_type: str) -> str:
         ContentType=content_type or "application/octet-stream",
     )
     return key
+
+
+def upload_bytes(data: bytes, filename: str, content_type: str) -> str:
+    """Generate a key and upload raw bytes to it. Returns the key."""
+    return upload_to_key(build_key(filename), data, content_type)
 
 
 def presigned_url(key: str, expiry: int = None, download_name: str = None) -> str:
