@@ -20,15 +20,15 @@
       </div>
       <div>
         <div class="bt">ConTrackt</div>
-        <div class="bs">Foothill-De Anza · Contracts &amp; Risk</div>
+        <div class="bs">Foothill-De Anza · Contract Management</div>
       </div>
     </div>
 
     <nav aria-label="Primary">
       <div class="side-cap">Manage</div>
-      <button class="on" onclick="showView('contracts',this)"><span class="ic">📄</span><span>Contracts</span></button>
-      <button onclick="showView('insurance',this)"><span class="ic">🛡️</span><span>Insurance</span></button>
-      <button id="navNotifBtn" onclick="showView('alerts',this)"><span class="ic">✉️</span><span>Notifications</span><span class="nav-badge" id="navBadge">0</span></button>
+      <button class="on" onclick="showView('dashboard',this)"><span class="ic">📊</span><span>Dashboard</span></button>
+      <button onclick="showView('upload',this)"><span class="ic">⬆️</span><span>Document Upload</span></button>
+      <button id="navNotifBtn" onclick="showView('alerts',this)"><span class="ic">⏰</span><span>Alerts</span></button>
       <button onclick="showView('documents',this)"><span class="ic">🗂️</span><span>Documents</span></button>
     </nav>
 
@@ -55,25 +55,25 @@
 
     <div class="content">
 
-      <!-- HERO -->
-      <div class="hero">
-        <div class="h-txt">
-          <span class="pulse-chip">✨ Portfolio pulse</span>
-          <h2 id="heroHeadline">Loading portfolio…</h2>
-          <p>Stay ahead of renewals — review the lifecycle, request updated COIs, and keep the district covered.</p>
-          <div class="h-actions">
-            <button class="btn" onclick="openUpload()">＋ Upload contract</button>
+      <!-- PORTFOLIO HEADER (dashboard only) -->
+      <div class="pulse" id="hero">
+        <span class="pulse-accent"></span>
+        <div class="pulse-top">
+          <div>
+            <div class="pulse-eyebrow">Portfolio overview · <span id="heroDate"></span></div>
+            <h2 class="pulse-title">Contract portfolio</h2>
           </div>
+          <button class="btn" onclick="showView('upload')">＋ Upload contract</button>
         </div>
+        <div class="statrow" id="cards"></div>
       </div>
 
       <!-- CONTENT GRID -->
       <div class="cgrid">
         <div class="col-main">
 
-          <!-- CONTRACTS VIEW -->
-          <div class="view on" id="v-contracts">
-            <div class="cards" id="cards"></div>
+          <!-- DASHBOARD VIEW -->
+          <div class="view on" id="v-dashboard">
             <div class="panel">
               <div class="panel-head">
                 <div class="ph-title">Contracts</div>
@@ -103,24 +103,47 @@
             <div class="foot">Click any row to open the contract summary, linked documents, and insurance &amp; PO tracking.</div>
           </div>
 
-          <!-- INSURANCE VIEW -->
-          <div class="view" id="v-insurance">
-            <p style="color:var(--muted);margin:2px 0 16px">Insurance certificate (COI) status rolled up by category. Certificates renew annually; multi-year contracts need a fresh COI each year.</p>
-            <div class="roll">
-              <table><thead><tr>
-                <th style="cursor:default">Category</th><th style="cursor:default">Contracts</th>
-                <th style="cursor:default">Coverage health</th><th style="cursor:default">Current</th>
-                <th style="cursor:default">Expiring ≤30d</th><th style="cursor:default">Lapsed</th>
-                <th style="cursor:default">Missing endorsement</th>
-              </tr></thead><tbody id="insRows"></tbody></table>
+          <!-- DOCUMENT UPLOAD VIEW -->
+          <div class="view" id="v-upload">
+            <div class="panel" style="padding:22px">
+              <div id="uploadPrompt">
+                <h3 style="font-family:'Montserrat',sans-serif;margin:0 0 4px">Upload a document</h3>
+                <p class="mini" style="margin:0 0 16px">Drop a contract, purchase order, or certificate of insurance. It is stored in S3 and parsed by AI — review the fields, then save.</p>
+                <div class="drop" id="drop">
+                  <div class="big">📄</div>
+                  <div style="margin-top:6px"><b>Click to browse</b> or drag a file here</div>
+                  <div class="mini" style="margin-top:6px">PDF, PNG, JPG, TIFF</div>
+                  <input type="file" id="fileInput" class="hidden" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff">
+                </div>
+                <div class="status-line" id="uploadStatus"></div>
+                <div class="method">
+                  <b>How extraction works:</b> the file is stored in S3, then a Lambda runs <b>Amazon Bedrock (Claude Sonnet 4.5)</b> to read the document and return structured fields (Textract fallback). Review and correct the fields, then save.
+                </div>
+              </div>
+              <div class="extract" id="extract">
+                <div class="split">
+                  <div class="pdfpane">
+                    <div class="pl"><span>📄 Uploaded document</span><span class="mini">cross-check the fields</span></div>
+                    <iframe id="pdfframe" title="Uploaded document"></iframe>
+                  </div>
+                  <div class="fieldpane">
+                    <div class="fh">Extracted fields <span style="font-weight:400;color:var(--muted)">— verify &amp; edit</span></div>
+                    <div class="fsub" id="extractMethod"></div>
+                    <div class="scanline hidden" id="scan"></div>
+                    <div class="exscroll" id="exrows"></div>
+                    <div style="display:flex;gap:10px;margin-top:14px">
+                      <button class="btn ghost" onclick="resetUpload()">Upload another</button>
+                      <button class="btn" style="flex:1;justify-content:center" id="saveContractBtn" onclick="saveContract()">✓ Save contract</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <!-- ALERTS / NOTIFICATIONS VIEW -->
+          <!-- ALERTS VIEW -->
           <div class="view" id="v-alerts">
-            <div class="sched">✉️ <b>Automated rule:</b> emails go to each contract's head (cc: Risk) at <b>30 days</b> and again at <b>2 weeks</b> before expiry. Below are the contracts within 30 days.
-              <button class="btn" style="margin-left:12px" onclick="sendAlertEmails(false)">Send alert emails</button>
-            </div>
+            <div class="sched">⏰ <b>Automated:</b> emails are sent to each contract's head (cc: Risk) at <b>30 days</b> and again at <b>2 weeks</b> before expiry. Below are the notifications for contracts within 30 days, and who was notified.</div>
             <div id="emails"></div>
           </div>
 
@@ -148,65 +171,26 @@
           </div>
 
         </div><!-- /col-main -->
-
-        <!-- RIGHT RAIL -->
-        <aside class="rail" aria-label="Overview">
-          <div class="widget">
-            <h4>Upcoming renewals</h4>
-            <div class="w-sub">Soonest contract end dates</div>
-            <div id="railUpcoming"></div>
-          </div>
-          <div class="widget">
-            <h4>Portfolio health</h4>
-            <div class="w-sub">Share of contracts in good standing</div>
-            <div id="railRings"></div>
-          </div>
-        </aside>
-
       </div><!-- /cgrid -->
     </div><!-- /content -->
   </div><!-- /main -->
 </div><!-- /app -->
 
-<!-- CONTRACT DETAIL OVERLAY -->
-<div class="detail" id="detail"><div class="detail-inner" id="detailInner"></div></div>
+<!-- CONTRACT DETAIL — SIDE DRAWER -->
+<div class="overlay" id="ovl" onclick="closeDetail()"></div>
+<div class="drawer" id="drawer" aria-label="Contract detail"></div>
 
-<!-- UPLOAD MODAL (real: S3 + Bedrock async parse) -->
-<div class="modal" id="modal">
-  <div class="mbox" id="uploadBox">
-    <div class="mh"><h3>Upload contract</h3><button class="close" style="position:static" onclick="closeUpload()">×</button></div>
-    <div class="mbody">
-      <div id="uploadPrompt">
-        <div class="drop" id="drop">
-          <div class="big">📄</div>
-          <div style="margin-top:6px"><b>Click to browse</b> or drag a file here</div>
-          <div class="mini" style="margin-top:6px">PDF, PNG, JPG, TIFF · stored in S3, parsed by AI</div>
-          <input type="file" id="fileInput" class="hidden" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff">
-        </div>
-        <div class="status-line" id="uploadStatus"></div>
-        <div class="method">
-          <b>How extraction works:</b> the file is stored in S3, then a Lambda runs <b>Amazon Bedrock (Claude Sonnet 4.5)</b> to read the document and return structured fields (Textract fallback). Review and correct the fields below, then save.
-        </div>
-      </div>
-      <div class="extract" id="extract">
-        <div class="split">
-          <div class="pdfpane">
-            <div class="pl"><span>📄 Uploaded document</span><span class="mini">cross-check the fields</span></div>
-            <iframe id="pdfframe" title="Uploaded document"></iframe>
-          </div>
-          <div class="fieldpane">
-            <div class="fh">Extracted fields <span style="font-weight:400;color:var(--muted)">— verify &amp; edit</span></div>
-            <div class="fsub" id="extractMethod"></div>
-            <div class="scanline hidden" id="scan"></div>
-            <div class="exscroll" id="exrows"></div>
-            <div style="display:flex;gap:10px;margin-top:14px">
-              <button class="btn ghost" onclick="closeUpload()">Cancel</button>
-              <button class="btn" style="flex:1;justify-content:center" id="saveContractBtn" onclick="saveContract()">✓ Save contract</button>
-            </div>
-          </div>
-        </div>
+<!-- DOCUMENT VIEWER MODAL (in-app popup) -->
+<div class="modal" id="docModal">
+  <div class="mbox wide">
+    <div class="mh">
+      <h3 id="docTitle">Document</h3>
+      <div style="display:flex;gap:10px;align-items:center">
+        <a class="btn ghost sm" id="docOpenTab" target="_blank" rel="noopener">Open in tab ↗</a>
+        <button class="close" style="position:static" onclick="closeDoc()">×</button>
       </div>
     </div>
+    <div class="mbody" style="padding:0"><div id="docViewer"></div></div>
   </div>
 </div>
 

@@ -536,3 +536,40 @@
 
 /* empty-state row */
 .empty{text-align:center;color:var(--muted);padding:34px}
+
+/* right rail removed — content spans full width */
+.cgrid{grid-template-columns:1fr}
+
+/* ============================================================
+   Portfolio header (replaces the crimson hero) + inline stats
+   ============================================================ */
+.pulse{background:#faf7f5;border:1px solid var(--line);border-radius:16px;padding:20px 22px;
+  margin-bottom:20px;box-shadow:var(--shadow-sm);position:relative}
+.pulse-accent{position:absolute;top:0;left:22px;width:56px;height:4px;border-radius:0 0 4px 4px;
+  background:linear-gradient(90deg,var(--crim),var(--gold))}
+.pulse-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.pulse-eyebrow{font-size:11.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);font-weight:700}
+.pulse-title{font-family:'Montserrat',sans-serif;font-size:clamp(23px,3vw,32px);font-weight:800;
+  margin:6px 0 0;color:var(--ink);letter-spacing:-.5px}
+.statrow{display:flex;flex-wrap:wrap;border-top:1px solid var(--line);margin-top:16px}
+.stat{flex:1 1 140px;min-width:130px;padding:16px 18px 6px;border-right:1px solid var(--line);
+  cursor:pointer;transition:background .12s}
+.stat:last-child{border-right:none}
+.stat:hover{background:rgba(139,20,36,.04)}
+.stat .n{font-family:'Montserrat',sans-serif;font-size:30px;font-weight:750;line-height:1;
+  letter-spacing:-1px;color:var(--ink)}
+.stat .n.red{color:var(--crim)}
+.stat .l{font-size:12.5px;color:var(--muted);margin-top:9px;display:flex;align-items:center;gap:7px}
+.stat .l .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.stat .sub{font-size:11px;color:var(--muted);margin-top:3px}
+@media(max-width:620px){.stat{flex-basis:45%}.stat:nth-child(2n){border-right:none}}
+
+/* ============================================================
+   In-app document viewer modal
+   ============================================================ */
+#docModal .mbody{padding:0}
+#docViewer{height:75vh;background:#525659;display:flex;align-items:center;justify-content:center}
+#docViewer iframe{width:100%;height:100%;border:0;background:#fff}
+#docViewer img{max-width:100%;max-height:100%;object-fit:contain}
+#docViewer .empty{color:#e2e8f0}
+@media(max-width:900px){#docViewer{height:70dvh}}

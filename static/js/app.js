@@ -50,6 +50,9 @@ function showView(v, btn) {
   $$(".sidebar nav button").forEach((b) => b.classList.remove("on"));
   if (btn) btn.classList.add("on");
   else { const nb = $(`.sidebar nav button[onclick*="'${v}'"]`); if (nb) nb.classList.add("on"); }
+  // Hero belongs to the dashboard only
+  $("#hero").style.display = v === "dashboard" ? "" : "none";
+  if (v === "upload") resetUpload();
   if (v === "alerts" && !state.alertsNotified) { state.alertsNotified = true; sendAlertEmails(true); }
 }
 
@@ -60,8 +63,8 @@ async function loadAll() {
       api("/api/contracts"), api("/api/documents"), api("/api/alerts"),
     ]);
     state.contracts = contracts; state.documents = documents; state.alerts = alerts;
-    buildDeptFilter(); buildHero(); buildCards(); buildHead(); render();
-    buildInsurance(); buildAlerts(); buildRail(); buildDocHub();
+    buildDeptFilter(); buildCards(); buildHead(); render();
+    buildAlerts(); buildDocHub();
   } catch (e) {
     $("#rows").innerHTML = `<tr><td colspan="7" class="empty">Could not reach the backend.<br><span class="mini">${esc(e.message)}</span></td></tr>`;
     toast("Failed to load: " + e.message, true);
@@ -69,23 +72,29 @@ async function loadAll() {
 }
 
 /* ===== Hero + cards ===== */
-function buildHero() {
-  const ex = state.contracts.filter((c) => contractStatus(c) === "Expiring").length;
-  const ins = state.contracts.filter((c) => ["Expiring", "Lapsed"].includes(insStatus(c))).length;
-  $("#heroHeadline").innerHTML = `You have ${ex} ${ex === 1 ? "contract" : "contracts"} and ${ins} ${ins === 1 ? "insurance item" : "insurance items"} needing attention within 30 days.`;
+function compactUSD(n) {
+  n = Number(n) || 0;
+  if (n >= 1e6) return "$" + (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1e3) return "$" + Math.round(n / 1e3) + "k";
+  return "$" + n.toLocaleString();
 }
 function buildCards() {
   const C = state.contracts;
-  const cards = [
-    { n: C.length, l: "Total contracts", dot: "d-crim", f: () => resetF() },
-    { n: C.filter((c) => contractStatus(c) === "Active").length, l: "Active", dot: "d-green", f: () => setStatus("Active") },
-    { n: C.filter((c) => contractStatus(c) === "Expiring").length, l: "Expiring ≤30 days", dot: "d-amber", f: () => setStatus("Expiring") },
-    { n: C.filter((c) => contractStatus(c) === "Expired").length, l: "Expired", dot: "d-red", f: () => setStatus("Expired") },
-    { n: C.filter((c) => ["Expiring", "Lapsed"].includes(insStatus(c))).length, l: "Insurance issues", dot: "d-red", f: () => setIns() },
+  const totalVal = C.reduce((s, c) => s + (Number(c.value) || 0), 0);
+  const cells = [
+    { n: C.length, l: "Contracts", sub: compactUSD(totalVal) + " total value", f: () => resetF() },
+    { n: C.filter((c) => contractStatus(c) === "Active").length, l: "Active", dot: "var(--green)", f: () => setStatus("Active") },
+    { n: C.filter((c) => contractStatus(c) === "Expiring").length, l: "Expiring ≤30d", dot: "var(--amber)", f: () => setStatus("Expiring") },
+    { n: C.filter((c) => contractStatus(c) === "Expired").length, l: "Expired", dot: "var(--red)", red: true, f: () => setStatus("Expired") },
+    { n: C.filter((c) => ["Expiring", "Lapsed"].includes(insStatus(c))).length, l: "COI issues", dot: "var(--crim)", red: true, f: () => setIns() },
   ];
-  $("#cards").innerHTML = cards.map((c, i) =>
-    `<div class="card" onclick="_cardf(${i})"><span class="dot ${c.dot}"></span><div class="n">${c.n}</div><div class="l">${c.l}</div></div>`).join("");
-  window.__cardf = cards.map((c) => c.f);
+  $("#cards").innerHTML = cells.map((c, i) =>
+    `<div class="stat" onclick="_cardf(${i})">
+      <div class="n ${c.red ? "red" : ""}">${c.n}</div>
+      <div class="l">${c.dot ? `<span class="dot" style="background:${c.dot}"></span>` : ""}${c.l}</div>
+      ${c.sub ? `<div class="sub">${c.sub}</div>` : ""}
+    </div>`).join("");
+  window.__cardf = cells.map((c) => c.f);
 }
 window._cardf = (i) => window.__cardf[i]();
 function setStatus(s) { resetF(); $("#fStatus").value = s; render(); }
@@ -132,8 +141,8 @@ function render() {
       <td>${esc(dept(c))}</td>
       <td>${fmt(c.end)}<div class="days">${dtxt(c.days_to_end)}</div></td>
       <td><span class="tag ${TAG[st]}">${st === "Expiring" ? "Expiring soon" : st}</span></td>
-      <td><span class="tag ${TAG[is]}">${is}</span><div class="days">exp ${fmt(c.ins)}</div></td>
-      <td><span class="tag ${TAG[ps]}">${ps}</span><div class="days">${esc(c.po || "—")}</div></td>
+      <td>${fmt(c.ins)}</td>
+      <td>${esc(c.po || "—")}</td>
       <td>${usd(c.value)}</td></tr>`;
   }).join("") || `<tr><td colspan="7" class="empty">No contracts match these filters.</td></tr>`;
   $("#count").textContent = `${rows.length} of ${state.contracts.length} contracts`;
@@ -169,102 +178,68 @@ async function openDetail(id) {
   if (!rec.length) rec.push("No action needed — contract, insurance, and PO are all current.");
 
   const docBtn = (d, label) => d
-    ? `<a class="btn ghost" href="/api/documents/${esc(d.id)}/view" target="_blank" rel="noopener">${label}</a>`
+    ? `<button class="btn ghost" onclick="openDoc('${esc(d.id)}')">${label}</button>`
     : `<button class="btn ghost" disabled title="No document on file">${label}</button>`;
 
   const owner = c.contract_head || "—";
   const ownerEmail = c.contract_head_email || "";
 
-  $("#detailInner").innerHTML = `
-    <button class="back" onclick="closeDetail()">← Back to contracts</button>
-    <div class="dgrid">
-      <div class="dmain">
-        <div class="dcard dtl-head">
-          <div class="dh-txt">
-            <div class="dtl-eyebrow">🏢 Foothill–De Anza CCD · ${esc(dept(c))}</div>
-            <h1>${esc(c.vendor || "Contract")}</h1>
-            <div class="dsub">${esc(c.scope || "")}</div>
-            <div class="pills">
-              ${pill(cCls, st === "Expiring" ? "Expiring soon" : st)}
-              ${pill(iCls, is === "Current" ? "COI current" : is === "Lapsed" ? "COI lapsed" : is === "Expiring" ? "COI expiring" : "COI unknown")}
-              ${c.po ? pill(pCls, c.po) : ""}
-              ${String(c.addl).toLowerCase() === "yes" ? "" : pill("warn", "No add’l insured")}
-            </div>
-          </div>
-          <div class="dtl-actions">
-            ${docBtn(agreement, "📄 View contract")}
-            ${docBtn(coi, "🛡 View COI")}
-            <button class="btn" onclick="closeDetail();document.getElementById('navNotifBtn').click()">Review alerts</button>
-          </div>
-        </div>
-
-        <div class="dcard">
-          <div class="kv-label">✨ AI scope summary</div>
-          <div class="sum-text">${esc(c.summary || "No summary extracted.")}</div>
-        </div>
-
-        <div class="dcard">
-          <h3 class="dsec-title">Key facts</h3>
-          <div class="facts">
-            <div class="fact"><div class="fk">💲 Value</div><div class="fv">${usd(c.value)}</div></div>
-            <div class="fact"><div class="fk">📅 Term</div><div class="fv">${fmt(c.start)} → ${fmt(c.end)}</div></div>
-            <div class="fact"><div class="fk"># PO number</div><div class="fv">${esc(c.po || "—")}</div></div>
-            <div class="fact"><div class="fk">📅 PO ends</div><div class="fv">${fmt(c.poEnd)}</div></div>
-            <div class="fact"><div class="fk">🏫 Campus</div><div class="fv">${esc(c.college || "—")}</div></div>
-            <div class="fact"><div class="fk">👤 Contract head</div><div class="fv">${esc(owner)}${ownerEmail ? `<small>${esc(ownerEmail)}</small>` : ""}</div></div>
-            <div class="fact"><div class="fk">🛡 Insurance expiry</div><div class="fv">${fmt(c.ins)}</div></div>
-            <div class="fact"><div class="fk">➕ Additional insured</div><div class="fv">${esc(c.addl || "—")}</div></div>
-          </div>
-        </div>
-
-        <div class="dcard">
-          <h3 class="dsec-title">Lifecycle tracking</h3>
-          <div class="track">
-            <div class="track-row"><div><div class="tt">Contract term</div><div class="ts">Ends ${fmt(c.end)}</div></div>${pill(cCls, st === "Expiring" ? "Expiring soon" : st)}</div>
-            <div class="track-row"><div><div class="tt">Insurance / COI</div><div class="ts">${is === "Lapsed" ? "Certificate expired " + fmt(c.ins) : "Valid through " + fmt(c.ins)}</div></div>${pill(iCls, is)}</div>
-            <div class="track-row"><div><div class="tt">PO / fiscal year</div><div class="ts">Ends ${fmt(c.poEnd)}</div></div>${c.po ? pill(pCls, c.po) : pill("warn", "No PO")}</div>
-          </div>
-        </div>
-
-        <div class="dcard">
-          <h3 class="dsec-title">Documents (${docs.length})</h3>
-          ${docs.length ? docs.map((d) => `<div class="track-row" style="border-top:1px solid var(--line)">
-            <div><div class="tt">${d.type === "coi" ? "🛡 Certificate of Insurance" : "📄 " + (d.type || "Document")}</div><div class="ts">${esc(d.filename || "")}</div></div>
-            <a class="btn ghost" href="/api/documents/${esc(d.id)}/view" target="_blank" rel="noopener">Open</a></div>`).join("")
-      : `<div class="mini">No documents linked to this contract.</div>`}
-        </div>
+  const kv = (k, v) => `<div class="k">${k}</div><div>${v}</div>`;
+  $("#drawer").innerHTML = `
+    <div class="dh">
+      <button class="close" onclick="closeDetail()">×</button>
+      <div class="m">🏢 Foothill–De Anza CCD · ${esc(dept(c))}</div>
+      <h2>${esc(c.vendor || "Contract")}</h2>
+      <div class="m">${esc(c.scope || "")}</div>
+    </div>
+    <div class="body">
+      <div class="pills" style="margin-bottom:14px">
+        ${pill(cCls, st === "Expiring" ? "Expiring soon" : st)}
+        ${pill(iCls, is === "Current" ? "COI current" : is === "Lapsed" ? "COI lapsed" : is === "Expiring" ? "COI expiring" : "COI unknown")}
+        ${c.po ? pill(pCls, c.po) : ""}
+        ${String(c.addl).toLowerCase() === "yes" ? "" : pill("warn", "No add’l insured")}
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+        ${docBtn(agreement, "📄 Contract")}
+        ${docBtn(coi, "🛡 COI")}
+        <button class="btn" onclick="closeDetail();document.getElementById('navNotifBtn').click()">Alerts</button>
       </div>
 
-      <div class="drail">
-        <div class="dcard"><div class="rec-title">⚠ Recommended actions</div><ul class="rec-list">${rec.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>
-        <div class="dcard"><div class="rail-title">Contract head</div><div class="owner-name">👤 ${esc(owner)}</div>${ownerEmail ? `<a class="owner-mail" href="mailto:${esc(ownerEmail)}">✉ ${esc(ownerEmail)}</a>` : `<div class="mini" style="margin-top:8px">No email on file — no alert email is sent.</div>`}</div>
-        <div class="dcard"><div class="rail-title">Financials</div><div class="fin-row"><span class="fl">Value</span><span class="fr">${usd(c.value)}</span></div><div class="fin-row"><span class="fl">Campus</span><span class="fr">${esc(c.college || "—")}</span></div></div>
+      <div class="aibox"><div class="lab">✨ AI scope summary</div><p>${esc(c.summary || "No summary extracted.")}</p></div>
+
+      <div class="sec">Key facts</div>
+      <div class="kv">
+        ${kv("Value", usd(c.value))}
+        ${kv("Term", fmt(c.start) + " → " + fmt(c.end))}
+        ${kv("PO number", esc(c.po || "—"))}
+        ${kv("PO ends", fmt(c.poEnd))}
+        ${kv("Campus", esc(c.college || "—"))}
+        ${kv("Insurance expiry", fmt(c.ins))}
+        ${kv("Additional insured", esc(c.addl || "—"))}
       </div>
+
+      <div class="sec">Lifecycle tracking</div>
+      <div class="track">
+        <div class="track-row"><div><div class="tt">Contract term</div><div class="ts">Ends ${fmt(c.end)}</div></div>${pill(cCls, st === "Expiring" ? "Expiring soon" : st)}</div>
+        <div class="track-row"><div><div class="tt">Insurance / COI</div><div class="ts">${is === "Lapsed" ? "Certificate expired " + fmt(c.ins) : "Valid through " + fmt(c.ins)}</div></div>${pill(iCls, is)}</div>
+        <div class="track-row"><div><div class="tt">Purchase order</div><div class="ts">Ends ${fmt(c.poEnd)}</div></div>${c.po ? pill(pCls, c.po) : pill("warn", "No PO")}</div>
+      </div>
+
+      <div class="sec">Documents (${docs.length})</div>
+      ${docs.length ? docs.map((d) => `<div class="track-row"><div><div class="tt">${d.type === "coi" ? "🛡 Certificate of Insurance" : "📄 " + (d.type || "Document")}</div><div class="ts">${esc(d.filename || "")}</div></div><button class="btn ghost" onclick="openDoc('${esc(d.id)}')">Open</button></div>`).join("") : `<div class="mini">No documents linked.</div>`}
+
+      <div class="sec">Recommended actions</div>
+      <ul class="rec-list">${rec.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
+
+      <div class="sec">Contract head</div>
+      <div class="owner-name">👤 ${esc(owner)}</div>
+      ${ownerEmail ? `<a class="owner-mail" href="mailto:${esc(ownerEmail)}">✉ ${esc(ownerEmail)}</a>` : `<div class="mini" style="margin-top:8px">No email on file — no alert email is sent.</div>`}
     </div>`;
-  $("#detail").classList.add("show");
-  $("#detail").scrollTop = 0;
+  $("#ovl").classList.add("show");
+  $("#drawer").classList.add("show");
+  $("#drawer").scrollTop = 0;
 }
-function closeDetail() { $("#detail").classList.remove("show"); }
-
-/* ===== Insurance rollup (by category) ===== */
-function buildInsurance() {
-  const cats = [...new Set(state.contracts.map(dept))].sort();
-  $("#insRows").innerHTML = cats.map((d) => {
-    const cs = state.contracts.filter((c) => dept(c) === d);
-    const cur = cs.filter((c) => insStatus(c) === "Current").length;
-    const exp = cs.filter((c) => insStatus(c) === "Expiring").length;
-    const lap = cs.filter((c) => insStatus(c) === "Lapsed").length;
-    const miss = cs.filter((c) => String(c.addl).toLowerCase() !== "yes").length;
-    const t = cs.length, pc = (n) => t ? Math.round(n / t * 100) : 0;
-    return `<tr>
-      <td style="font-weight:650">${esc(d)}</td><td>${t}</td>
-      <td><div class="bar"><i style="width:${pc(cur)}%;background:var(--green)"></i><i style="width:${pc(exp)}%;background:var(--amber)"></i><i style="width:${pc(lap)}%;background:var(--red)"></i></div></td>
-      <td>${cur ? `<span class="tag t-green">${cur}</span>` : "—"}</td>
-      <td>${exp ? `<span class="tag t-amber">${exp}</span>` : "—"}</td>
-      <td>${lap ? `<span class="tag t-red">${lap}</span>` : "—"}</td>
-      <td>${miss ? `<span class="tag t-red">${miss}</span>` : '<span class="mini">0</span>'}</td></tr>`;
-  }).join("") || `<tr><td colspan="7" class="empty">No contracts yet.</td></tr>`;
-}
+function closeDetail() { const d = $("#drawer"), o = $("#ovl"); if (d) d.classList.remove("show"); if (o) o.classList.remove("show"); }
 
 /* ===== Notifications (real /api/alerts) ===== */
 function buildAlerts() {
@@ -275,14 +250,14 @@ function buildAlerts() {
     g.kinds.push(a.kind); if (a.days < g.days) g.days = a.days;
   });
   const groups = Object.values(byC).sort((a, b) => a.days - b.days);
-  $("#navBadge").textContent = groups.length;
   const kindLabel = { insurance: "insurance / COI", contract: "contract", po: "purchase order" };
   $("#emails").innerHTML = groups.map((g) => {
     let statusBadge, click = "";
     if (!g.has_email) statusBadge = `<span class="tag t-slate">No email on file</span>`;
     else if (g.message_status === "sent") { statusBadge = `<span class="tag t-green">✉ Emailed</span>`; click = `onclick="openMessage('${esc(g.message_id)}')"`; }
+    else if (g.message_status === "demo") { statusBadge = `<span class="tag t-amber">✉ Prepared (demo)</span>`; click = `onclick="openMessage('${esc(g.message_id)}')"`; }
     else if (g.message_status === "failed") { statusBadge = `<span class="tag t-red">Send failed</span>`; click = `onclick="openMessage('${esc(g.message_id)}')"`; }
-    else statusBadge = `<span class="tag t-amber">Pending — click “Send alert emails”</span>`;
+    else statusBadge = `<span class="tag t-amber">Queued</span>`;
     const kinds = [...new Set(g.kinds)].map((k) => kindLabel[k]).join(", ");
     return `<div class="email ${click ? "clickable" : ""}" ${click}>
       <div class="eh">
@@ -322,31 +297,26 @@ async function openMessage(mid) {
 }
 function closeMessage() { $("#msgModal").classList.remove("show"); }
 
-/* ===== Right rail ===== */
-function ring(pct, color, label) {
-  const r = 26, c = 2 * Math.PI * r, off = c * (1 - pct / 100);
-  return `<div class="ring-row"><svg class="ring" viewBox="0 0 64 64" role="img" aria-label="${label} ${pct}%">
-    <circle class="ring-bg" cx="32" cy="32" r="${r}"/>
-    <circle cx="32" cy="32" r="${r}" stroke="${color}" stroke-width="7" fill="none" stroke-linecap="round"
-      stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" transform="rotate(-90 32 32)"/>
-    <text class="ring-num" x="32" y="37" text-anchor="middle">${pct}%</text></svg>
-    <div class="ring-label">${label}</div></div>`;
+/* ===== In-app document viewer (popup, not a new tab) ===== */
+async function openDoc(id) {
+  const doc = state.documents.find((d) => d.id === id) || {};
+  const name = doc.filename || "Document";
+  $("#docTitle").textContent = name;
+  $("#docViewer").innerHTML = `<div class="empty"><span class="spinner"></span> Loading…</div>`;
+  $("#docOpenTab").removeAttribute("href");
+  $("#docModal").classList.add("show");
+  try {
+    const { url } = await api(`/api/documents/${id}/url`);
+    $("#docOpenTab").href = url;
+    const isImg = /\.(png|jpe?g|gif|tiff?)$/i.test(name);
+    $("#docViewer").innerHTML = isImg
+      ? `<img src="${url}" alt="${esc(name)}">`
+      : `<iframe src="${url}" title="${esc(name)}"></iframe>`;
+  } catch (e) {
+    $("#docViewer").innerHTML = `<div class="empty">Could not load: ${esc(e.message)}</div>`;
+  }
 }
-function buildRail() {
-  const up = state.contracts.map((c) => ({ c, d: c.days_to_end })).filter((x) => x.d != null && x.d >= 0).sort((a, b) => a.d - b.d).slice(0, 5);
-  $("#railUpcoming").innerHTML = up.map(({ c, d }) => {
-    const st = contractStatus(c);
-    return `<div class="rail-row" onclick="openDetail('${esc(c.id)}')" tabindex="0" onkeydown="if(event.key==='Enter')openDetail('${esc(c.id)}')">
-      <span class="rail-dot ${st === "Expiring" ? "d-amber" : "d-green"}"></span>
-      <div class="rail-main"><div class="rail-v">${esc(c.vendor || "—")}</div><div class="rail-sub">${esc(dept(c))} · ${fmt(c.end)}</div></div>
-      <div class="rail-days">${d}d</div></div>`;
-  }).join("") || `<div class="mini" style="padding:8px 0">Nothing due soon.</div>`;
-  const t = state.contracts.length, pc = (n) => t ? Math.round(n / t * 100) : 0;
-  const active = pc(state.contracts.filter((c) => contractStatus(c) === "Active").length);
-  const coi = pc(state.contracts.filter((c) => insStatus(c) === "Current").length);
-  const addl = pc(state.contracts.filter((c) => String(c.addl).toLowerCase() === "yes").length);
-  $("#railRings").innerHTML = ring(active, "var(--green)", "Contracts active") + ring(coi, "var(--amber)", "COI current") + ring(addl, "var(--crim)", "Add’l insured on file");
-}
+function closeDoc() { $("#docModal").classList.remove("show"); $("#docViewer").innerHTML = ""; }
 
 /* ===== Document Hub ===== */
 function buildDocHub() {
@@ -364,7 +334,7 @@ function buildDocHub() {
     <td>${esc((d.uploaded_at || "").slice(0, 10))}</td>
     <td>${d.archived ? '<span class="tag t-red">Archived</span>' : '<span class="tag t-green">Current</span>'}</td>
     <td style="text-align:right;white-space:nowrap">
-      <a class="btn ghost" href="/api/documents/${esc(d.id)}/view" target="_blank" rel="noopener">Open</a>
+      <button class="btn ghost" onclick="openDoc('${esc(d.id)}')">Open</button>
       <button class="btn ghost" onclick="toggleArchive('${esc(d.id)}')">${d.archived ? "Restore" : "Archive"}</button></td></tr>`).join("")
     : `<tr><td colspan="6" class="empty">No documents match.</td></tr>`;
 }
@@ -393,16 +363,14 @@ const FIELDS = [
   { k: "scope", label: "Scope", t: "textarea" },
   { k: "summary", label: "AI summary", t: "textarea" },
 ];
-function openUpload() {
-  $("#modal").classList.add("show");
-  $("#uploadBox").classList.remove("wide");
+function resetUpload() {
   $("#uploadPrompt").style.display = "block";
   $("#extract").classList.remove("show");
   $("#uploadStatus").innerHTML = "";
   $("#pdfframe").src = "";
+  $("#fileInput").value = "";
   state.pendingUpload = null;
 }
-function closeUpload() { $("#modal").classList.remove("show"); $("#pdfframe").src = ""; }
 
 async function uploadFile(file) {
   $("#uploadStatus").innerHTML = `<span class="spinner"></span> Uploading <b>${esc(file.name)}</b>…`;
@@ -413,7 +381,6 @@ async function uploadFile(file) {
   state.pendingUpload = res;
   // switch to extract view with the document preview
   $("#uploadPrompt").style.display = "none";
-  $("#uploadBox").classList.add("wide");
   $("#extract").classList.add("show");
   $("#pdfframe").src = `/api/documents/${res.document.id}/view`;
   await loadAll(); // refresh doc hub
@@ -462,13 +429,17 @@ async function saveContract() {
   if (state.pendingUpload && state.pendingUpload.document) payload.document_id = state.pendingUpload.document.id;
   try {
     await api("/api/contracts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    toast("Contract saved"); closeUpload(); await loadAll();
-    const btn = $(`.sidebar nav button[onclick*="'contracts'"]`); showView("contracts", btn);
+    toast("Contract saved"); resetUpload(); await loadAll();
+    const btn = $(`.sidebar nav button[onclick*="'dashboard'"]`); showView("dashboard", btn);
   } catch (e) { toast(e.message, true); }
 }
 
 /* ===== Wire up ===== */
-$("#today").textContent = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+{
+  const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  $("#today").textContent = today;
+  const hd = $("#heroDate"); if (hd) hd.textContent = today;
+}
 ["search", "fDept", "fStatus", "fIns"].forEach((id) => $("#" + id).addEventListener("input", render));
 $("#docSearch").addEventListener("input", (e) => { state.docQuery = e.target.value.toLowerCase().trim(); buildDocHub(); });
 $("#docScope").addEventListener("change", (e) => { state.docScope = e.target.value; buildDocHub(); });
@@ -478,6 +449,6 @@ drop.addEventListener("click", () => fileInput.click());
 ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.style.borderColor = ""; }));
 drop.addEventListener("drop", (e) => { if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]); });
 fileInput.addEventListener("change", () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeDetail(); closeUpload(); closeMessage(); } });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeDetail(); closeMessage(); closeDoc(); } });
 
 loadAll();
