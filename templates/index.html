@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ConTrackt - FHDA Contract & Insurance Manager</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">CT</div>
+      <div><b>ConTrackt</b><small>Foothill-De Anza CCD</small></div>
+    </div>
+    <nav class="nav" id="nav">
+      <button data-view="dashboard" class="active"><span class="ic">▤</span><span>Dashboard</span></button>
+      <button data-view="upload"><span class="ic">⬆</span><span>Upload &amp; Extract</span></button>
+      <button data-view="alerts"><span class="ic">⏰</span><span>Alerts <span id="alertCount"></span></span></button>
+      <button data-view="documents"><span class="ic">🗂</span><span>Document Hub</span></button>
+    </nav>
+    <div class="foot">AWS MVP · DynamoDB · S3 · Bedrock</div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h1 id="viewTitle">Dashboard</h1>
+        <div class="sub" id="viewSub">Overview of contracts, insurance, and purchase orders</div>
+      </div>
+      <button class="btn" id="quickUpload">+ New Document</button>
+    </div>
+
+    <div class="content">
+      <!-- DASHBOARD -->
+      <section class="view active" id="view-dashboard">
+        <div class="kpis" id="kpis"></div>
+        <div class="grid-2">
+          <div class="card">
+            <h3 class="section-title">Contracts by Category</h3>
+            <div id="catBars"></div>
+          </div>
+          <div class="card">
+            <h3 class="section-title">Contracts by Campus</h3>
+            <div id="collegeBars"></div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <div class="head">
+            <h3 class="section-title" style="margin:0">Agreement / Contract - PO Pairings</h3>
+            <span class="muted" id="pairCount"></span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Agreement</th><th>Vendor</th><th>Campus</th>
+                <th>PO #</th><th class="mono">Value</th><th>End Date</th><th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="pairRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- UPLOAD -->
+      <section class="view" id="view-upload">
+        <div class="card">
+          <h3 class="section-title">Upload a document</h3>
+          <p class="muted" style="margin-top:-4px">
+            Drop a contract, purchase order, or certificate of insurance (PDF or image).
+            It is stored in S3 and parsed by AI. Review and edit the extracted fields, then save.
+          </p>
+          <div class="drop" id="drop">
+            <div class="big">⬆</div>
+            <div><b>Click to browse</b> or drag a file here</div>
+            <div class="muted" style="font-size:12px;margin-top:6px">PDF, PNG, JPG, TIFF · up to {{ '' }}20MB</div>
+            <input type="file" id="fileInput" class="hidden" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" />
+          </div>
+          <div id="uploadStatus" style="margin-top:14px"></div>
+        </div>
+
+        <div class="card hidden" id="extractCard" style="margin-top:16px">
+          <h3 class="section-title">Review extracted fields <span class="muted" id="extractMethod"></span></h3>
+          <p class="muted" style="margin-top:-4px">The document is on the left. Edit anything the AI got wrong, then save.</p>
+          <div class="extract-layout">
+            <div class="extract-preview" id="extractPreview">
+              <div class="placeholder">Document preview</div>
+            </div>
+            <div>
+              <div class="form-grid" id="extractForm"></div>
+              <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
+                <button class="btn ghost" id="discardBtn">Discard</button>
+                <button class="btn" id="saveContractBtn">Save Contract</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ALERTS -->
+      <section class="view" id="view-alerts">
+        <div class="card" style="margin-bottom:16px">
+          <h3 class="section-title">Expiring within 30 days</h3>
+          <p class="muted" style="margin-top:-4px">Insurance (COI), contract end, and purchase order expirations.</p>
+        </div>
+        <div id="alertList"></div>
+      </section>
+
+      <!-- DOCUMENTS -->
+      <section class="view" id="view-documents">
+        <div class="toolbar">
+          <input type="search" id="docSearch" placeholder="Search documents by name, vendor, type..." />
+          <div class="seg" id="docSeg">
+            <button data-scope="current" class="active">Current</button>
+            <button data-scope="archived">Archived</button>
+            <button data-scope="all">All</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Document</th><th>Type</th><th>Linked Vendor</th><th>Uploaded</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody id="docRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Detail drawer -->
+  <div class="drawer-backdrop" id="backdrop"></div>
+  <div class="drawer" id="drawer">
+    <div class="dhead">
+      <div>
+        <h2 id="drawerTitle" style="margin:0 0 4px">Contract</h2>
+        <div class="muted" id="drawerSub"></div>
+      </div>
+      <button class="close-x" id="drawerClose">&times;</button>
+    </div>
+    <div class="dbody" id="drawerBody"></div>
+    <div class="dfoot" id="drawerFoot"></div>
+  </div>
+
+  <!-- Document viewer -->
+  <div class="viewer-backdrop" id="viewerBackdrop"></div>
+  <div class="viewer" id="viewer">
+    <div class="vhead">
+      <div class="vtabs" id="viewerTabs"></div>
+      <div class="vactions">
+        <a class="btn ghost sm" id="viewerOpen" target="_blank" rel="noopener">Open in new tab &#8599;</a>
+        <button class="close-x" id="viewerClose">&times;</button>
+      </div>
+    </div>
+    <div class="vbody" id="viewerBody"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

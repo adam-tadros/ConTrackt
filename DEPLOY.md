@@ -1,0 +1,137 @@
+# Deploying ConTrackt to AWS (Elastic Beanstalk)
+
+This puts the Flask app on **Elastic Beanstalk** (EC2 + nginx + gunicorn) and
+uses **DynamoDB, S3, Textract, and Bedrock** as the backend. The app
+authenticates to AWS through the EB instance's **IAM role** — no access keys
+live on the server.
+
+> Run everything from the project root in PowerShell.
+
+## 0. Prerequisites
+
+```powershell
+# AWS CLI configured with an admin-ish user (for provisioning + deploy)
+aws configure                      # keys + default region (e.g. us-east-1)
+aws sts get-caller-identity        # should print your account/user
+
+# Install the Elastic Beanstalk CLI
+pip install awsebcli
+eb --version
+```
+
+Bedrock model access for `anthropic.claude-3-haiku-20240307-v1:0` must already
+be enabled (you confirmed this) in the region you'll use for `BEDROCK_REGION`.
+
+## 1. Create the data resources (once)
+
+```powershell
+python provision.py     # creates the S3 bucket + 2 DynamoDB tables
+python aws_smoke.py     # expect: S3 / DynamoDB / Bedrock all OK
+```
+
+If `S3_BUCKET` (default `contrackt-documents`) is taken globally, set a unique
+name in `.env` and re-run — then update `deploy/iam-policy.json` to match.
+
+## 2. Initialize Elastic Beanstalk
+
+```powershell
+eb init
+```
+
+Pick: your **region**, **Create new application** (name `contrackt`), platform
+**Python** (choose 3.11 or newer), and decline CodeCommit. Say yes to SSH if you
+want shell access.
+
+## 3. Create the environment
+
+```powershell
+eb create contrackt-env --single
+```
+
+`--single` uses one instance with no load balancer (cheapest for an MVP). Drop
+it if you want a load-balanced, scalable environment. This takes a few minutes.
+
+## 4. Grant the instance role permission to use AWS
+
+The app calls S3/DynamoDB/Textract/Bedrock using the EC2 instance profile. Attach
+the least-privilege policy in `deploy/iam-policy.json` to that role
+(`aws-elasticbeanstalk-ec2-role` unless you set a custom one):
+
+```powershell
+aws iam put-role-policy `
+  --role-name aws-elasticbeanstalk-ec2-role `
+  --policy-name ContracktRuntime `
+  --policy-document file://deploy/iam-policy.json
+```
+
+## 5. Set environment variables
+
+```powershell
+eb setenv `
+  AWS_REGION=us-east-1 `
+  BEDROCK_REGION=us-east-1 `
+  BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0 `
+  S3_BUCKET=contrackt-documents `
+  DDB_CONTRACTS_TABLE=contrackt_contracts `
+  DDB_DOCUMENTS_TABLE=contrackt_documents `
+  SECRET_KEY=<put-a-long-random-string-here>
+```
+
+Do **not** set `CONTRACKT_DEMO` — leaving it unset runs against real AWS.
+
+## 6. Deploy and open
+
+```powershell
+eb deploy
+eb open
+```
+
+## 7. (Optional) Load the sample contracts
+
+Run the seeder locally against the same live AWS resources — it uploads the real
+sample PDFs to S3 and creates the linked records:
+
+```powershell
+python seed.py
+```
+
+Refresh the app and the dashboard, alerts, and Document Hub will be populated.
+
+## Updating later
+
+Commit or just save your changes, then:
+
+```powershell
+eb deploy
+```
+
+## Logs & troubleshooting
+
+```powershell
+eb logs
+eb status
+eb health
+```
+
+- **500s / "Unable to locate credentials"** → the instance role is missing the
+  policy from step 4, or `AWS_REGION` is wrong.
+- **Uploads fail at ~1MB** → the nginx limit; `.platform/nginx/conf.d/upload_size.conf`
+  raises it to 25M and ships automatically. Confirm it deployed with `eb ssh`.
+- **Bedrock AccessDenied** → model access not enabled in `BEDROCK_REGION`, or the
+  policy's Bedrock statement is missing.
+
+## Important security note
+
+This MVP has **no authentication**. Before exposing it publicly:
+- Put it behind auth (AWS Cognito, or at minimum an app-level login), and
+- Serve over HTTPS (an Application Load Balancer + ACM certificate, or CloudFront).
+
+## Teardown
+
+```powershell
+eb terminate contrackt-env
+# then remove data resources if you no longer need them:
+#   aws s3 rb s3://contrackt-documents --force
+#   aws dynamodb delete-table --table-name contrackt_contracts
+#   aws dynamodb delete-table --table-name contrackt_documents
+```
